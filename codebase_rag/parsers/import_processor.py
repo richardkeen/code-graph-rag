@@ -11,6 +11,7 @@ from .. import logs as ls
 from ..language_spec import LanguageSpec
 from ..services import IngestorProtocol
 from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
+from .kotlin import utils as kotlin_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
 from .stdlib_extractor import (
@@ -102,6 +103,8 @@ class ImportProcessor:
                     self._parse_dynamic_imports(root_node, module_qn, language, queries)
                 case cs.SupportedLanguage.JAVA:
                     self._parse_java_imports(captures, module_qn)
+                case cs.SupportedLanguage.KOTLIN:
+                    self._parse_kotlin_imports(captures, module_qn)
                 case cs.SupportedLanguage.RUST:
                     self._parse_rust_imports(captures, module_qn)
                 case cs.SupportedLanguage.GO:
@@ -802,6 +805,19 @@ class ImportProcessor:
                                 name=imported_name, path=resolved_path
                             )
                         )
+
+    def _parse_kotlin_imports(self, captures: dict, module_qn: str) -> None:
+        for import_node in captures.get(cs.CAPTURE_IMPORT, []):
+            if import_node.type != cs.TS_KOTLIN_IMPORT:
+                continue
+            parsed = kotlin_utils.parse_import_header(import_node)
+            if not parsed:
+                continue
+            if parsed.is_wildcard:
+                self.import_mapping[module_qn][f"*{parsed.path}"] = parsed.path
+                continue
+            local_name = parsed.alias or parsed.path.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            self.import_mapping[module_qn][local_name] = parsed.path
 
     def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):

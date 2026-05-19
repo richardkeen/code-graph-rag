@@ -640,6 +640,18 @@ class CallProcessor:
         )
 
     def _get_call_target_name(self, call_node: Node) -> str | None:
+        # Kotlin's call_expression and infix_expression have no tree-sitter fields
+        # — they use positional children. JS/TS share the "call_expression" node
+        # type string but expose a `function` field, so distinguish by absence of
+        # field-based shape rather than node type alone.
+        if (
+            call_node.type
+            in (cs.TS_KOTLIN_CALL_EXPRESSION, cs.TS_KOTLIN_INFIX_EXPRESSION)
+            and call_node.child_by_field_name(cs.TS_FIELD_FUNCTION) is None
+            and call_node.child_by_field_name(cs.FIELD_NAME) is None
+        ):
+            return self._get_kotlin_call_target_name(call_node)
+
         if func_child := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION):
             match func_child.type:
                 case (
@@ -681,6 +693,43 @@ class CallProcessor:
         if name_node := call_node.child_by_field_name(cs.FIELD_NAME):
             if name_node.text is not None:
                 return str(name_node.text.decode(cs.ENCODING_UTF8))
+
+        return None
+
+    def _get_kotlin_call_target_name(self, call_node: Node) -> str | None:
+        """Walk a Kotlin call_expression / infix_expression and return the callee name.
+
+        tree-sitter-kotlin call/infix shapes:
+        - `(call_expression (identifier) value_arguments)` for direct calls like
+          `User(1)` — the first named child is the callee identifier.
+        - `(call_expression (navigation_expression expression "." identifier) value_arguments)`
+          for method calls like `a.b.c()` — the trailing `identifier` child of the
+          navigation_expression is the method name.
+        - `(infix_expression expression identifier expression)` for `1 to 2`-style
+          calls — the middle named child is the operator function.
+        """
+        if call_node.type == cs.TS_KOTLIN_CALL_EXPRESSION:
+            for child in call_node.children:
+                if not child.is_named:
+                    continue
+                if child.type == cs.TS_KOTLIN_IDENTIFIER and child.text:
+                    return child.text.decode(cs.ENCODING_UTF8)
+                if child.type == cs.TS_KOTLIN_NAVIGATION_EXPRESSION:
+                    for grand in reversed(list(child.children)):
+                        if grand.type == cs.TS_KOTLIN_IDENTIFIER and grand.text:
+                            return grand.text.decode(cs.ENCODING_UTF8)
+                    return None
+                # First named child wasn't an identifier or navigation_expression.
+                return None
+            return None
+
+        if call_node.type == cs.TS_KOTLIN_INFIX_EXPRESSION:
+            named = [c for c in call_node.children if c.is_named]
+            if len(named) >= 3:
+                middle = named[1]
+                if middle.type == cs.TS_KOTLIN_IDENTIFIER and middle.text:
+                    return middle.text.decode(cs.ENCODING_UTF8)
+            return None
 
         return None
 

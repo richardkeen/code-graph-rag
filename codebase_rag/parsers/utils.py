@@ -90,6 +90,13 @@ def ingest_method(
         method_name = cpp_utils.extract_function_name(method_node)
         if not method_name:
             return
+    elif language == cs.SupportedLanguage.KOTLIN:
+        from .kotlin import utils as kotlin_utils
+
+        info = kotlin_utils.extract_function_info(method_node)
+        if not info.name:
+            return
+        method_name = info.name
     elif not (method_name_node := method_node.child_by_field_name(cs.FIELD_NAME)):
         return
     elif (text := method_name_node.text) is None:

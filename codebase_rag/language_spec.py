@@ -73,6 +73,75 @@ def _generic_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
         return []
 
 
+def _kotlin_get_name(node: Node) -> str | None:
+    """Resolve the FQN-relevant name for a Kotlin scope/function node.
+
+    tree-sitter-kotlin exposes a `name` field on every declaration we care
+    about (class / object / companion / function / type alias), so we lean
+    on `child_by_field_name("name")` rather than walking positional children.
+
+    Two special cases:
+    - Companion objects without an explicit name use Kotlin's default
+      qualifier `Companion`.
+    - Top-level extension functions like `fun String.shout()` are *not*
+      methods on a `String` Class node; instead we fold the receiver type
+      into the FQN here so that the resolver produces `module.String.shout`
+      and the function ends up scoped under the receiver name. Methods
+      inside classes don't need this — `class_qn` already qualifies them.
+    """
+    if node.type in (
+        cs.TS_KOTLIN_CLASS_DECLARATION,
+        cs.TS_KOTLIN_OBJECT_DECLARATION,
+        cs.TS_KOTLIN_TYPE_ALIAS,
+    ):
+        return _generic_get_name(node)
+    if node.type == cs.TS_KOTLIN_COMPANION_OBJECT:
+        return _generic_get_name(node) or cs.KOTLIN_COMPANION_DEFAULT_NAME
+    if node.type == cs.TS_KOTLIN_FUNCTION_DECLARATION:
+        receiver_name = _kotlin_extension_receiver_name(node)
+        fn_name = _generic_get_name(node)
+        if not fn_name:
+            return None
+        if receiver_name:
+            return f"{receiver_name}{cs.SEPARATOR_DOT}{fn_name}"
+        return fn_name
+    if node.type in (cs.TS_KOTLIN_GETTER, cs.TS_KOTLIN_SETTER):
+        return _generic_get_name(node)
+    if node.type in (
+        cs.TS_KOTLIN_PRIMARY_CONSTRUCTOR,
+        cs.TS_KOTLIN_SECONDARY_CONSTRUCTOR,
+    ):
+        return "<init>"
+    return _generic_get_name(node)
+
+
+def _kotlin_extension_receiver_name(fn_node: Node) -> str | None:
+    """For `fun String.shout()` return "String" — else None.
+
+    tree-sitter-kotlin represents the receiver as a `user_type` positional
+    child appearing *before* the `name` field's `identifier` child, with a
+    literal `.` between them. We accept the receiver only when it precedes
+    the name node (otherwise it's a return-type `user_type`).
+    """
+    name_node = fn_node.child_by_field_name(cs.TS_FIELD_NAME)
+    if not name_node:
+        return None
+    saw_name = False
+    receiver: Node | None = None
+    for child in fn_node.children:
+        if child.id == name_node.id:
+            saw_name = True
+            break
+        if child.type == cs.TS_KOTLIN_USER_TYPE:
+            receiver = child
+    if not saw_name or receiver is None:
+        return None
+    for child in receiver.children:
+        if child.type == cs.TS_KOTLIN_IDENTIFIER and child.text:
+            return child.text.decode(cs.ENCODING_UTF8)
+    return None
+
+
 def _rust_get_name(node: Node) -> str | None:
     if node.type in cs.RS_TYPE_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
@@ -175,6 +244,13 @@ SCALA_FQN_SPEC = FQNSpec(
     file_to_module_parts=_generic_file_to_module,
 )
 
+KOTLIN_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.FQN_KOTLIN_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_KOTLIN_FUNCTION_TYPES),
+    get_name=_kotlin_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
 CSHARP_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(cs.FQN_CS_SCOPE_TYPES),
     function_node_types=frozenset(cs.FQN_CS_FUNCTION_TYPES),
@@ -225,6 +301,7 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.CSS: CSS_FQN_SPEC,
     cs.SupportedLanguage.HTML: HTML_FQN_SPEC,
     cs.SupportedLanguage.SCSS: SCSS_FQN_SPEC,
+    cs.SupportedLanguage.KOTLIN: KOTLIN_FQN_SPEC,
 }
 
 
@@ -458,6 +535,43 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         module_node_types=("stylesheet",),
         call_node_types=(),
         import_node_types=("import_statement",),
+    ),
+    cs.SupportedLanguage.KOTLIN: LanguageSpec(
+        language=cs.SupportedLanguage.KOTLIN,
+        file_extensions=cs.KOTLIN_EXTENSIONS,
+        function_node_types=cs.SPEC_KOTLIN_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_KOTLIN_CLASS_TYPES,
+        module_node_types=cs.SPEC_KOTLIN_MODULE_TYPES,
+        call_node_types=cs.SPEC_KOTLIN_CALL_TYPES,
+        import_node_types=cs.SPEC_KOTLIN_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_KOTLIN_IMPORT_TYPES,
+        function_query="""
+        (function_declaration
+            name: (identifier) @name) @function
+        (primary_constructor) @function
+        (secondary_constructor) @function
+        (anonymous_function) @function
+        (getter) @function
+        (setter) @function
+        """,
+        class_query="""
+        (class_declaration
+            name: (identifier) @name) @class
+        (object_declaration
+            name: (identifier) @name) @class
+        (companion_object) @class
+        (type_alias
+            type: (identifier) @name) @class
+        """,
+        call_query="""
+        (call_expression
+            (identifier) @name) @call
+        (call_expression
+            (navigation_expression
+                (identifier) @name)) @call
+        (infix_expression
+            (identifier) @name) @call
+        """,
     ),
 }
 
