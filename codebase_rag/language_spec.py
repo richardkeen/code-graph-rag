@@ -545,6 +545,7 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         call_node_types=cs.SPEC_KOTLIN_CALL_TYPES,
         import_node_types=cs.SPEC_KOTLIN_IMPORT_TYPES,
         import_from_node_types=cs.SPEC_KOTLIN_IMPORT_TYPES,
+        package_indicators=cs.SPEC_KOTLIN_PACKAGE_INDICATORS,
         function_query="""
         (function_declaration
             name: (identifier) @name) @function

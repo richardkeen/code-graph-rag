@@ -30,10 +30,10 @@ class StructureProcessor:
     def _get_parent_identifier(
         self, parent_rel_path: Path, parent_container_qn: str | None
     ) -> NodeIdentifier:
-        if parent_rel_path == Path(cs.PATH_CURRENT_DIR):
-            return (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.project_name)
         if parent_container_qn:
             return (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
+        if parent_rel_path == Path(cs.PATH_CURRENT_DIR):
+            return (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.project_name)
         return (cs.NodeLabel.FOLDER, cs.KEY_PATH, parent_rel_path.as_posix())
 
     def identify_structure(self) -> None:

@@ -134,6 +134,7 @@ PKG_CMAKE_LISTS = "CMakeLists.txt"
 PKG_MAKEFILE = "Makefile"
 PKG_VCXPROJ_GLOB = "*.vcxproj"
 PKG_CONANFILE = "conanfile.txt"
+PKG_BUILD_GRADLE_KTS = "build.gradle.kts"
 
 DEFAULT_REGION = "us-central1"
 DEFAULT_MODEL = "llama3.2"
@@ -603,7 +604,7 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
     ),
     SupportedLanguage.KOTLIN: LanguageMetadata(
         LanguageStatus.DEV,
-        "Top-level functions, classes, objects, companion objects, data/sealed/value classes",
+        "Companion objects, extension functions, data/sealed/value classes, primary/secondary constructors, Gradle module package detection. See [Kotlin terminology mapping](docs/kotlin-terminology.md)",
         "Kotlin",
     ),
 }
@@ -2656,6 +2657,7 @@ SPEC_KOTLIN_CALL_TYPES = (
     TS_KOTLIN_INFIX_EXPRESSION,
 )
 SPEC_KOTLIN_IMPORT_TYPES = (TS_KOTLIN_IMPORT,)
+SPEC_KOTLIN_PACKAGE_INDICATORS = (PKG_BUILD_GRADLE_KTS,)
 
 FQN_KOTLIN_SCOPE_TYPES = (
     TS_KOTLIN_CLASS_DECLARATION,
