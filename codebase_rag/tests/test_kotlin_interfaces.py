@@ -1,0 +1,198 @@
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_node_names,
+    get_relationships,
+)
+from codebase_rag.types_defs import NodeType
+
+
+def _edge_targets(relationships: list, child_qn_suffix: str) -> set[str]:
+    """Return the set of target qualified names for edges whose source qn ends with the given suffix."""
+    targets: set[str] = set()
+    for call in relationships:
+        src = call.args[0]
+        tgt = call.args[2]
+        if src[2].endswith(child_qn_suffix):
+            targets.add(tgt[2])
+    return targets
+
+
+@pytest.fixture
+def kotlin_interfaces_project(temp_repo: Path) -> Path:
+    project_path = temp_repo / "kotlin_interfaces"
+    project_path.mkdir()
+    (project_path / "Same.kt").write_text(
+        encoding="utf-8",
+        data="""
+package shapes
+
+interface Greeter {
+    fun greet(): String
+}
+
+open class Animal(val name: String) {
+    open fun sound(): String = "generic"
+}
+
+class Plain(val id: Int)
+
+class Foo : Greeter {
+    override fun greet(): String = "hi"
+}
+
+class Bar : Animal("bar")
+
+class Both : Animal("both"), Greeter {
+    override fun greet(): String = "hey"
+}
+""",
+    )
+    return project_path
+
+
+@pytest.fixture
+def kotlin_cross_file_project(temp_repo: Path) -> Path:
+    """Interface declared in one file, implementer in another, with names chosen
+    so the implementer's file sorts BEFORE the interface's file (alphabetical
+    Path iteration). This is the case the deferred-resolution pass exists for —
+    at the moment ClientImpl is processed, Greeter has not yet been ingested.
+    """
+    project_path = temp_repo / "kotlin_cross"
+    project_path.mkdir()
+    (project_path / "Aaa_client.kt").write_text(
+        encoding="utf-8",
+        data="""
+package crossfile
+
+import crossfile.Greeter
+
+class ClientImpl : Greeter {
+    override fun greet(): String = "hello"
+}
+""",
+    )
+    (project_path / "Zzz_iface.kt").write_text(
+        encoding="utf-8",
+        data="""
+package crossfile
+
+interface Greeter {
+    fun greet(): String
+}
+""",
+    )
+    return project_path
+
+
+def test_kotlin_interface_node_label(
+    kotlin_interfaces_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    create_and_run_updater(
+        kotlin_interfaces_project, mock_ingestor, skip_if_missing="kotlin"
+    )
+
+    interfaces = get_node_names(mock_ingestor, NodeType.INTERFACE)
+    classes = get_node_names(mock_ingestor, NodeType.CLASS)
+
+    assert any(name.endswith("Greeter") for name in interfaces), interfaces
+    assert any(name.endswith("Plain") for name in classes), classes
+    assert any(name.endswith("Animal") for name in classes), classes
+    # Greeter must NOT be a Class node.
+    assert not any(name.endswith("Greeter") for name in classes), classes
+
+
+def test_kotlin_implements_edge_for_interface_parent(
+    kotlin_interfaces_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    create_and_run_updater(
+        kotlin_interfaces_project, mock_ingestor, skip_if_missing="kotlin"
+    )
+
+    implements = get_relationships(mock_ingestor, "IMPLEMENTS")
+    inherits = get_relationships(mock_ingestor, "INHERITS")
+
+    foo_implements_targets = _edge_targets(implements, "Foo")
+    assert any(t.endswith("Greeter") for t in foo_implements_targets), (
+        f"Foo should IMPLEMENTS Greeter, got {foo_implements_targets}"
+    )
+    foo_inherits_targets = _edge_targets(inherits, "Foo")
+    assert not any(t.endswith("Greeter") for t in foo_inherits_targets), (
+        f"Foo should not INHERITS Greeter, got {foo_inherits_targets}"
+    )
+
+
+def test_kotlin_inherits_edge_for_class_parent(
+    kotlin_interfaces_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    create_and_run_updater(
+        kotlin_interfaces_project, mock_ingestor, skip_if_missing="kotlin"
+    )
+
+    inherits = get_relationships(mock_ingestor, "INHERITS")
+    implements = get_relationships(mock_ingestor, "IMPLEMENTS")
+
+    bar_inherits_targets = _edge_targets(inherits, "Bar")
+    assert any(t.endswith("Animal") for t in bar_inherits_targets), (
+        f"Bar should INHERITS Animal, got {bar_inherits_targets}"
+    )
+    bar_implements_targets = _edge_targets(implements, "Bar")
+    assert not any(t.endswith("Animal") for t in bar_implements_targets), (
+        f"Bar should not IMPLEMENTS Animal, got {bar_implements_targets}"
+    )
+
+
+def test_kotlin_mixed_extends_and_implements(
+    kotlin_interfaces_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    create_and_run_updater(
+        kotlin_interfaces_project, mock_ingestor, skip_if_missing="kotlin"
+    )
+
+    inherits = get_relationships(mock_ingestor, "INHERITS")
+    implements = get_relationships(mock_ingestor, "IMPLEMENTS")
+
+    both_inherits_targets = _edge_targets(inherits, "Both")
+    both_implements_targets = _edge_targets(implements, "Both")
+
+    assert any(t.endswith("Animal") for t in both_inherits_targets), (
+        f"Both should INHERITS Animal, got {both_inherits_targets}"
+    )
+    assert any(t.endswith("Greeter") for t in both_implements_targets), (
+        f"Both should IMPLEMENTS Greeter, got {both_implements_targets}"
+    )
+
+
+def test_kotlin_cross_file_implements_resolves_correctly(
+    kotlin_cross_file_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Regression guard: the implementer's file is processed before the
+    interface's file (alphabetical order), so synchronous registry lookups
+    would mis-classify this as INHERITS. The deferred Kotlin pass is what
+    makes this test pass."""
+    create_and_run_updater(
+        kotlin_cross_file_project, mock_ingestor, skip_if_missing="kotlin"
+    )
+
+    implements = get_relationships(mock_ingestor, "IMPLEMENTS")
+    inherits = get_relationships(mock_ingestor, "INHERITS")
+
+    client_implements_targets = _edge_targets(implements, "ClientImpl")
+    client_inherits_targets = _edge_targets(inherits, "ClientImpl")
+
+    assert any(t.endswith("Greeter") for t in client_implements_targets), (
+        f"ClientImpl should IMPLEMENTS Greeter (cross-file), got "
+        f"implements={client_implements_targets}, inherits={client_inherits_targets}"
+    )
+    assert not any(t.endswith("Greeter") for t in client_inherits_targets), (
+        f"ClientImpl should not INHERITS Greeter, got {client_inherits_targets}"
+    )

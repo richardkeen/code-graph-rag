@@ -30,6 +30,12 @@ def determine_node_type(
         ):
             logger.info(logs.CLASS_FOUND_ENUM.format(name=class_name, qn=class_qn))
             return NodeType.ENUM
+        case cs.TS_KOTLIN_CLASS_DECLARATION if (
+            language == cs.SupportedLanguage.KOTLIN
+            and kotlin_utils.is_kotlin_interface(class_node)
+        ):
+            logger.info(logs.CLASS_FOUND_INTERFACE.format(name=class_name, qn=class_qn))
+            return NodeType.INTERFACE
         case cs.TS_TYPE_ALIAS_DECLARATION:
             logger.info(logs.CLASS_FOUND_TYPE.format(name=class_name, qn=class_qn))
             return NodeType.TYPE

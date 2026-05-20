@@ -17,6 +17,7 @@ from ..rs import utils as rs_utils
 from ..utils import ingest_method, safe_decode_text
 from . import cpp_modules
 from . import identity as id_
+from . import kotlin_inheritance as ki
 from . import method_override as mo
 from . import node_type as nt
 from . import relationships as rel
@@ -180,6 +181,8 @@ class ClassIngestMixin:
         }
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
+        if language == cs.SupportedLanguage.KOTLIN:
+            self.kotlin_class_qns.add(class_qn)
         if class_name:
             self.simple_name_lookup[class_name].add(class_qn)
 
@@ -318,6 +321,15 @@ class ClassIngestMixin:
         mo.process_all_method_overrides(
             self.function_registry,
             self.class_inheritance,
+            self.ingestor,
+        )
+
+    def process_all_kotlin_inheritance_edges(self) -> None:
+        ki.process_all_kotlin_inheritance_edges(
+            self.function_registry,
+            self.class_inheritance,
+            self.kotlin_class_qns,
+            self.simple_name_lookup,
             self.ingestor,
         )
 

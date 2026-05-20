@@ -55,10 +55,11 @@ def create_class_relationships(
             (node_type, cs.KEY_QUALIFIED_NAME, class_qn),
         )
 
-    for parent_class_qn in parent_classes:
-        create_inheritance_relationship(
-            node_type, class_qn, parent_class_qn, function_registry, ingestor
-        )
+    if language != cs.SupportedLanguage.KOTLIN:
+        for parent_class_qn in parent_classes:
+            create_inheritance_relationship(
+                node_type, class_qn, parent_class_qn, function_registry, ingestor
+            )
 
     if class_node.type == cs.TS_CLASS_DECLARATION:
         for interface_qn in pe.extract_implemented_interfaces(

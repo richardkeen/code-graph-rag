@@ -122,6 +122,19 @@ def extract_class_modifiers(class_node: ASTNode) -> list[str]:
     return extract_modifiers(class_node)
 
 
+def is_kotlin_interface(class_node: ASTNode) -> bool:
+    """Distinguish Kotlin `interface Foo {}` from `class Foo {}`.
+
+    tree-sitter-kotlin uses the same `class_declaration` node type for both;
+    the only structural difference is whether the node has an `interface`
+    or `class` keyword as a direct child.
+    """
+    for child in class_node.children:
+        if child.type == cs.TS_KOTLIN_INTERFACE_KEYWORD:
+            return True
+    return False
+
+
 def _user_type_name(user_type_node: ASTNode) -> str | None:
     for child in user_type_node.children:
         if child.type == cs.TS_KOTLIN_IDENTIFIER and (text := safe_decode_text(child)):

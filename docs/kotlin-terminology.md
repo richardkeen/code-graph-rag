@@ -20,8 +20,9 @@ The tables below disambiguate.
 | Source directory (no build file) | `Folder` | source-set directory under `src/main/kotlin/...`, or any subdirectory |
 | Any non-source file on disk | `File` | file on disk (`build.gradle.kts`, `README.md`, resources, …) |
 | Source file / compilation unit | `Module` | Kotlin file (`.kt`, `.kts`) — the tree-sitter `source_file` AST root |
-| Class-like declaration | `Class` | `class`, `object`, `companion object`, `interface`, `data class`, `sealed class`, `value class`, `typealias` |
+| Class-like declaration | `Class` | `class`, `object`, `companion object`, `data class`, `sealed class`, `value class`, `typealias` |
 | Enum class | `Enum` | `enum class` (individual `enum_entry` constants are not yet represented as graph nodes) |
+| Interface | `Interface` | `interface Foo {}` declarations |
 | Top-level function | `Function` | top-level function or extension function |
 | Member function | `Method` | member function inside a class/object/companion; constructors; property getters and setters |
 | Lambda / anonymous function | `AnonymousFunction` | lambda expression or `anonymous_function` |
@@ -29,7 +30,7 @@ The tables below disambiguate.
 
 ### Notes on overloaded mappings
 
-- Kotlin `interface` declarations almost always map to **`Class`** (because tree-sitter-kotlin uses `class_declaration` for them). A small minority appear as `Interface` nodes when they are named in a context that triggers the interface-specific resolver (e.g. when another class explicitly `:` implements them and the parent-extraction pass detects an interface-like shape). Treat `Interface` as a rare, opportunistic refinement — the canonical Kotlin interface representation in this graph is `Class`.
+- Kotlin `interface` declarations map to **`Interface`** — although tree-sitter-kotlin uses `class_declaration` for both, the classifier checks for the `interface` keyword as a direct child to distinguish them.
 - Kotlin `enum class` declarations map to **`Enum`** — the classifier inspects the `enum` modifier on `class_declaration` to make the distinction. Individual enum constants (`enum_entry` nodes — e.g. `RED`, `GREEN`, `BLUE`) are not yet represented as graph nodes; only the enum class itself is.
 - `typealias` is represented as `Class` in this graph.
 
@@ -53,8 +54,8 @@ The tables below disambiguate.
 | Folder contains a Kotlin file | `(Folder)-[:CONTAINS_MODULE]->(Module)` | One `Module` per `.kt` file |
 | File top-level definitions | `(Module)-[:DEFINES]->(Class\|Function\|AnonymousFunction)` | Top-level functions, classes, objects, lambdas |
 | Class methods | `(Class)-[:DEFINES_METHOD]->(Method)` | Includes companion-object methods and property accessors |
-| Inheritance | `(Class)-[:INHERITS]->(Class)` | Kotlin `: ParentClass(...)` and `: SomeInterface` both produce `INHERITS` edges in the common case |
-| Interface implementation | `(Class)-[:IMPLEMENTS]->(Interface)` | Rare — only used when the parent has been refined to an `Interface` node |
+| Inheritance | `(Class)-[:INHERITS]->(Class)` | Kotlin `: ParentClass(...)` where the parent is a class |
+| Interface implementation | `(Class)-[:IMPLEMENTS]->(Interface)` | Kotlin `: SomeInterface` where the parent is an interface. Resolved in a deferred pass after every file is ingested, since Kotlin's grammar uses the same `delegation_specifier` for both inheritance and implementation. |
 | Method override | `(Method)-[:OVERRIDES]->(Method)` | Kotlin `override fun ...` |
 | Import | `(Module)-[:IMPORTS]->(Module)` | Kotlin `import …` — resolved when the target module exists in the graph |
 | Function or method call | `(Function\|Method\|Module)-[:CALLS]->(Function\|Method)` | Module-level callers exist for top-level call sites; lambda call sites are attributed to their host function |

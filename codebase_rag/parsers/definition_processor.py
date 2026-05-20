@@ -55,6 +55,7 @@ class DefinitionProcessor(
         self.import_processor = import_processor
         self.module_qn_to_file_path = module_qn_to_file_path
         self.class_inheritance: dict[str, list[str]] = {}
+        self.kotlin_class_qns: set[str] = set()
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
 
     def process_file(
