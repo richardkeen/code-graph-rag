@@ -118,13 +118,16 @@ def test_kotlin_implements_edge_for_interface_parent(
     implements = get_relationships(mock_ingestor, "IMPLEMENTS")
     inherits = get_relationships(mock_ingestor, "INHERITS")
 
+    ingested_interfaces = get_node_names(mock_ingestor, NodeType.INTERFACE)
+
     foo_implements_targets = _edge_targets(implements, "Foo")
-    assert any(t.endswith("Greeter") for t in foo_implements_targets), (
-        f"Foo should IMPLEMENTS Greeter, got {foo_implements_targets}"
+    assert any(t in ingested_interfaces for t in foo_implements_targets), (
+        f"Foo should IMPLEMENTS an ingested Interface node, got {foo_implements_targets}, "
+        f"ingested interfaces={ingested_interfaces}"
     )
     foo_inherits_targets = _edge_targets(inherits, "Foo")
-    assert not any(t.endswith("Greeter") for t in foo_inherits_targets), (
-        f"Foo should not INHERITS Greeter, got {foo_inherits_targets}"
+    assert not any(t in ingested_interfaces for t in foo_inherits_targets), (
+        f"Foo should not INHERITS an Interface node, got {foo_inherits_targets}"
     )
 
 
@@ -139,13 +142,16 @@ def test_kotlin_inherits_edge_for_class_parent(
     inherits = get_relationships(mock_ingestor, "INHERITS")
     implements = get_relationships(mock_ingestor, "IMPLEMENTS")
 
+    ingested_classes = get_node_names(mock_ingestor, NodeType.CLASS)
+
     bar_inherits_targets = _edge_targets(inherits, "Bar")
-    assert any(t.endswith("Animal") for t in bar_inherits_targets), (
-        f"Bar should INHERITS Animal, got {bar_inherits_targets}"
+    assert any(t in ingested_classes for t in bar_inherits_targets), (
+        f"Bar should INHERITS an ingested Class node, got {bar_inherits_targets}, "
+        f"ingested classes={ingested_classes}"
     )
     bar_implements_targets = _edge_targets(implements, "Bar")
-    assert not any(t.endswith("Animal") for t in bar_implements_targets), (
-        f"Bar should not IMPLEMENTS Animal, got {bar_implements_targets}"
+    assert not any(t in ingested_classes for t in bar_implements_targets), (
+        f"Bar should not IMPLEMENTS a Class node, got {bar_implements_targets}"
     )
 
 
@@ -160,14 +166,17 @@ def test_kotlin_mixed_extends_and_implements(
     inherits = get_relationships(mock_ingestor, "INHERITS")
     implements = get_relationships(mock_ingestor, "IMPLEMENTS")
 
+    ingested_interfaces = get_node_names(mock_ingestor, NodeType.INTERFACE)
+    ingested_classes = get_node_names(mock_ingestor, NodeType.CLASS)
+
     both_inherits_targets = _edge_targets(inherits, "Both")
     both_implements_targets = _edge_targets(implements, "Both")
 
-    assert any(t.endswith("Animal") for t in both_inherits_targets), (
-        f"Both should INHERITS Animal, got {both_inherits_targets}"
+    assert any(t in ingested_classes for t in both_inherits_targets), (
+        f"Both should INHERITS an ingested Class node, got {both_inherits_targets}"
     )
-    assert any(t.endswith("Greeter") for t in both_implements_targets), (
-        f"Both should IMPLEMENTS Greeter, got {both_implements_targets}"
+    assert any(t in ingested_interfaces for t in both_implements_targets), (
+        f"Both should IMPLEMENTS an ingested Interface node, got {both_implements_targets}"
     )
 
 
@@ -186,13 +195,15 @@ def test_kotlin_cross_file_implements_resolves_correctly(
     implements = get_relationships(mock_ingestor, "IMPLEMENTS")
     inherits = get_relationships(mock_ingestor, "INHERITS")
 
+    ingested_interfaces = get_node_names(mock_ingestor, NodeType.INTERFACE)
+
     client_implements_targets = _edge_targets(implements, "ClientImpl")
     client_inherits_targets = _edge_targets(inherits, "ClientImpl")
 
-    assert any(t.endswith("Greeter") for t in client_implements_targets), (
-        f"ClientImpl should IMPLEMENTS Greeter (cross-file), got "
-        f"implements={client_implements_targets}, inherits={client_inherits_targets}"
+    assert any(t in ingested_interfaces for t in client_implements_targets), (
+        f"ClientImpl should IMPLEMENTS an ingested Interface node (cross-file), got "
+        f"implements={client_implements_targets}, interfaces={ingested_interfaces}"
     )
-    assert not any(t.endswith("Greeter") for t in client_inherits_targets), (
-        f"ClientImpl should not INHERITS Greeter, got {client_inherits_targets}"
+    assert not any(t in ingested_interfaces for t in client_inherits_targets), (
+        f"ClientImpl should not INHERITS an Interface node, got {client_inherits_targets}"
     )

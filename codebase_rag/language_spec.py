@@ -89,10 +89,14 @@ def _kotlin_get_name(node: Node) -> str | None:
       and the function ends up scoped under the receiver name. Methods
       inside classes don't need this — `class_qn` already qualifies them.
     """
+    if node.type == cs.TS_KOTLIN_TYPE_ALIAS:
+        # type_alias exposes the alias name via the `type:` field (the LHS identifier),
+        # not the `name:` field that _generic_get_name looks for.
+        name_node = node.child_by_field_name(cs.TS_FIELD_TYPE)
+        return name_node.text.decode(cs.ENCODING_UTF8) if name_node and name_node.text else None
     if node.type in (
         cs.TS_KOTLIN_CLASS_DECLARATION,
         cs.TS_KOTLIN_OBJECT_DECLARATION,
-        cs.TS_KOTLIN_TYPE_ALIAS,
     ):
         return _generic_get_name(node)
     if node.type == cs.TS_KOTLIN_COMPANION_OBJECT:

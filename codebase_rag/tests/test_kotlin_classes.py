@@ -77,3 +77,40 @@ def test_kotlin_class_inheritance_edge(
     assert any(
         src.endswith("Square") and tgt.endswith("Polygon") for src, tgt in targets
     ), targets
+
+
+def test_kotlin_typealias_ingested_by_alias_name(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Regression guard: typealias query captures LHS alias name (not RHS type).
+
+    tree-sitter-kotlin's type_alias grammar exposes the alias identifier via
+    the `type:` field, which is the LHS name. The class_query captures it as
+    @name.  This test asserts both a simple alias and a parameterised-RHS alias
+    are ingested under the correct alias name, not the RHS type.
+    """
+    project = temp_repo / "kotlin_typealias"
+    project.mkdir()
+    (project / "Aliases.kt").write_text(
+        encoding="utf-8",
+        data="""
+package aliases
+
+typealias UserId = String
+typealias UserMap = Map<String, String>
+""",
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="kotlin")
+
+    classes = get_node_names(mock_ingestor, NodeType.CLASS)
+    assert any(name.endswith("UserId") for name in classes), (
+        f"UserId typealias should be ingested as a Class; got {classes}"
+    )
+    assert any(name.endswith("UserMap") for name in classes), (
+        f"UserMap typealias should be ingested as a Class; got {classes}"
+    )
+    # Must NOT capture the RHS identifier instead of the alias name.
+    assert not any(name.endswith(".String") for name in classes), (
+        f"RHS 'String' should not be ingested as an alias node; got {classes}"
+    )

@@ -195,8 +195,8 @@ def _parameter_type_name(param_node: ASTNode) -> str | None:
             if name := _type_node_name(child):
                 return name
         elif child.type == cs.TS_KOTLIN_NULLABLE_TYPE:
-            if name := _type_node_name(child):
-                return f"{name}?"
+            # _type_node_name already appends "?" for nullable types; don't add another.
+            return _type_node_name(child)
     return None
 
 
@@ -223,15 +223,35 @@ def _extract_parameters(fn_node: ASTNode) -> list[str]:
     return params
 
 
+def _extract_property_name(accessor_node: ASTNode) -> str | None:
+    """Return the property name owning a getter or setter node.
+
+    The accessor is a direct child of `property_declaration`, which in turn
+    has a `variable_declaration` child whose first `identifier` child is the
+    property name.
+    """
+    prop = accessor_node.parent
+    if prop is None or prop.type != cs.TS_KOTLIN_PROPERTY_DECLARATION:
+        return None
+    for child in prop.children:
+        if child.type == cs.TS_KOTLIN_VARIABLE_DECLARATION:
+            for grandchild in child.children:
+                if grandchild.type == cs.TS_KOTLIN_IDENTIFIER and grandchild.text:
+                    return safe_decode_text(grandchild)
+    return None
+
+
 def _extract_function_name(fn_node: ASTNode) -> str | None:
     if fn_node.type == cs.TS_KOTLIN_FUNCTION_DECLARATION:
         if (name := fn_node.child_by_field_name(cs.TS_FIELD_NAME)) and name.text:
             return safe_decode_text(name)
         return None
     if fn_node.type == cs.TS_KOTLIN_GETTER:
-        return "<getter>"
+        prop = _extract_property_name(fn_node)
+        return f"{prop}<getter>" if prop else "<getter>"
     if fn_node.type == cs.TS_KOTLIN_SETTER:
-        return "<setter>"
+        prop = _extract_property_name(fn_node)
+        return f"{prop}<setter>" if prop else "<setter>"
     if fn_node.type in (
         cs.TS_KOTLIN_PRIMARY_CONSTRUCTOR,
         cs.TS_KOTLIN_SECONDARY_CONSTRUCTOR,

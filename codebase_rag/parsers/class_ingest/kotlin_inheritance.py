@@ -13,31 +13,43 @@ if TYPE_CHECKING:
     from ...types_defs import FunctionRegistryTrieProtocol, SimpleNameLookup
 
 
-def _resolve_kotlin_parent_type(
+def _resolve_kotlin_parent(
     parent_qn: str,
     function_registry: FunctionRegistryTrieProtocol,
     simple_name_lookup: SimpleNameLookup,
-) -> NodeType:
-    """Best-effort lookup of a Kotlin parent's NodeType.
+) -> tuple[NodeType, str]:
+    """Resolve a Kotlin parent QN to its canonical registry QN and NodeType.
 
     Kotlin parent qualified names from `extract_kotlin_supertypes` are
     package-rooted (e.g. `crossfile.Greeter`), but the function registry
     stores classes under file-path-rooted qns (e.g.
-    `kotlin_cross.Zzz_iface.Greeter`). When the direct lookup misses, fall
-    back to `simple_name_lookup` keyed by the trailing identifier, returning
-    `NodeType.INTERFACE` if any candidate is an interface.
+    `kotlin_cross.Zzz_iface.Greeter`). The Memgraph ingestor creates
+    relationships via MATCH on both endpoints — if the target QN does not
+    exist in the graph, the edge is silently dropped.
+
+    Resolution order:
+    1. Direct hit in function_registry — use as-is.
+    2. Simple-name fallback via simple_name_lookup — prefer Interface
+       candidates, then fall back to any Class candidate.
+    3. Return original QN unchanged (edge will likely be dropped by Memgraph,
+       but we cannot do better without a full import-map re-routing pass).
     """
     direct = function_registry.get(parent_qn, None)
     if direct is not None:
-        return direct  # type: ignore[return-value]
+        return direct, parent_qn  # type: ignore[return-value]
 
     simple_name = parent_qn.rsplit(SEPARATOR_DOT, 1)[-1]
     candidates = simple_name_lookup.get(simple_name, set())
+    best_class_qn: str | None = None
     for candidate_qn in candidates:
         candidate_type = function_registry.get(candidate_qn, None)
         if candidate_type == NodeType.INTERFACE:
-            return NodeType.INTERFACE
-    return NodeType.CLASS
+            return NodeType.INTERFACE, candidate_qn
+        if candidate_type == NodeType.CLASS and best_class_qn is None:
+            best_class_qn = candidate_qn
+    if best_class_qn is not None:
+        return NodeType.CLASS, best_class_qn
+    return NodeType.CLASS, parent_qn
 
 
 def process_all_kotlin_inheritance_edges(
@@ -61,18 +73,18 @@ def process_all_kotlin_inheritance_edges(
             continue
         child_node_type = function_registry.get(child_qn, NodeType.CLASS)
         for parent_qn in parent_qns:
-            parent_node_type = _resolve_kotlin_parent_type(
+            parent_node_type, resolved_qn = _resolve_kotlin_parent(
                 parent_qn, function_registry, simple_name_lookup
             )
             if parent_node_type == NodeType.INTERFACE:
                 rel.create_implements_relationship(
-                    str(child_node_type), child_qn, parent_qn, ingestor
+                    str(child_node_type), child_qn, resolved_qn, ingestor
                 )
             else:
                 rel.create_inheritance_relationship(
                     str(child_node_type),
                     child_qn,
-                    parent_qn,
+                    resolved_qn,
                     function_registry,
                     ingestor,
                 )
