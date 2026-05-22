@@ -511,3 +511,144 @@ class TestMultipleLanguages:
         ]
         qualified_names = {c[0][1]["qualified_name"] for c in package_calls}
         assert qualified_names == {"multi_lang.pypkg", "multi_lang.rustpkg"}
+
+
+def _kotlin_like_queries() -> dict[str, MagicMock | LanguageSpec | None]:
+    """Mirror Kotlin's real spec: extensions = (.kt, .kts), indicator =
+    build.gradle.kts, package_source_extensions = (.kt,) so a stray
+    `.kts` file alone does not activate the indicator."""
+    return {
+        "functions": None,
+        "classes": None,
+        "calls": None,
+        "imports": None,
+        "locals": None,
+        "config": LanguageSpec(
+            language=SupportedLanguage.KOTLIN,
+            file_extensions=(".kt", ".kts"),
+            function_node_types=(),
+            class_node_types=(),
+            module_node_types=(),
+            package_indicators=("build.gradle.kts",),
+            package_source_extensions=(".kt",),
+        ),
+        "language": MagicMock(),
+        "parser": MagicMock(),
+    }
+
+
+class TestPackageIndicatorScoping:
+    """A language's package indicators must only activate when that language
+    actually has source files in the repo. Two failure modes are guarded:
+
+    1. Sources living under excluded directories (vendor/node_modules) must
+       not leak into the extension set.
+    2. A package indicator file whose extension overlaps a source extension
+       (e.g. `build.gradle.kts` and `.kts`) must not self-validate; languages
+       can opt out of this via `package_source_extensions`.
+    """
+
+    def test_kotlin_indicator_alone_does_not_activate_in_java_repo(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+    ) -> None:
+        queries = {
+            SupportedLanguage.PYTHON: _make_mock_queries(("__init__.py",)),
+            SupportedLanguage.KOTLIN: _kotlin_like_queries(),
+        }
+        processor = StructureProcessor(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            project_name="java_only",
+            queries=queries,
+        )
+
+        # Java/Gradle layout: a build script with no Kotlin source files.
+        gradle_module = temp_repo / "service"
+        gradle_module.mkdir()
+        (gradle_module / "build.gradle.kts").touch()
+        (gradle_module / "Main.java").touch()
+
+        processor.identify_structure()
+
+        package_calls = [
+            c
+            for c in mock_ingestor.ensure_node_batch.call_args_list
+            if c[0][0] == "Package"
+        ]
+        # `service` should be a Folder, not a Package — Kotlin's indicator must
+        # not activate here because there are no `.kt` files in the repo.
+        assert package_calls == [], package_calls
+
+    def test_kotlin_indicator_activates_when_kotlin_source_present(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+    ) -> None:
+        queries = {SupportedLanguage.KOTLIN: _kotlin_like_queries()}
+        processor = StructureProcessor(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            project_name="kotlin_repo",
+            queries=queries,
+        )
+
+        kotlin_module = temp_repo / "service"
+        kotlin_module.mkdir()
+        (kotlin_module / "build.gradle.kts").touch()
+        (kotlin_module / "Main.kt").touch()
+
+        processor.identify_structure()
+
+        package_calls = [
+            c
+            for c in mock_ingestor.ensure_node_batch.call_args_list
+            if c[0][0] == "Package"
+        ]
+        qualified_names = {c[0][1]["qualified_name"] for c in package_calls}
+        assert qualified_names == {"kotlin_repo.service"}
+
+    def test_files_in_excluded_dirs_do_not_enable_indicators(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+    ) -> None:
+        queries = {
+            SupportedLanguage.RUST: _make_mock_queries(("Cargo.toml",)),
+        }
+        # Rust spec for this test: extensions = .rs, indicator = Cargo.toml.
+        queries[SupportedLanguage.RUST]["config"] = LanguageSpec(
+            language=SupportedLanguage.RUST,
+            file_extensions=(".rs",),
+            function_node_types=(),
+            class_node_types=(),
+            module_node_types=(),
+            package_indicators=("Cargo.toml",),
+        )
+        processor = StructureProcessor(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            project_name="excluded_repo",
+            queries=queries,
+        )
+
+        # `node_modules` is in IGNORE_PATTERNS — a Rust source there must NOT
+        # activate Cargo.toml package detection elsewhere in the repo.
+        vendored = temp_repo / "node_modules" / "some_pkg"
+        vendored.mkdir(parents=True)
+        (vendored / "lib.rs").touch()
+
+        # Top-level dir with Cargo.toml but no real Rust sources.
+        bogus = temp_repo / "service"
+        bogus.mkdir()
+        (bogus / "Cargo.toml").touch()
+
+        processor.identify_structure()
+
+        package_calls = [
+            c
+            for c in mock_ingestor.ensure_node_batch.call_args_list
+            if c[0][0] == "Package"
+        ]
+        assert package_calls == [], package_calls

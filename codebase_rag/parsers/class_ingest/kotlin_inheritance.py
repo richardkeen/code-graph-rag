@@ -76,7 +76,13 @@ def process_all_kotlin_inheritance_edges(
             parent_node_type, resolved_qn = _resolve_kotlin_parent(
                 parent_qn, function_registry, simple_name_lookup
             )
-            if parent_node_type == NodeType.INTERFACE:
+            # IMPLEMENTS is reserved for non-interface child → Interface parent
+            # (the schema rule is Class/Enum/Object → Interface). When an
+            # Interface extends another Interface, that's INHERITS.
+            if (
+                parent_node_type == NodeType.INTERFACE
+                and child_node_type != NodeType.INTERFACE
+            ):
                 rel.create_implements_relationship(
                     str(child_node_type), child_qn, resolved_qn, ingestor
                 )

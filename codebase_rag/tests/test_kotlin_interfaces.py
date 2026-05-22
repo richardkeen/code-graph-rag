@@ -180,6 +180,74 @@ def test_kotlin_mixed_extends_and_implements(
     )
 
 
+@pytest.fixture
+def kotlin_interface_extends_interface_project(temp_repo: Path) -> Path:
+    """A Kotlin interface extending another interface. The deferred resolution
+    pass must emit INHERITS (interface→interface), NOT IMPLEMENTS, since
+    IMPLEMENTS is reserved for non-interface implementers in the schema.
+    """
+    project_path = temp_repo / "kotlin_iface_chain"
+    project_path.mkdir()
+    (project_path / "Same.kt").write_text(
+        encoding="utf-8",
+        data="""
+package shapes
+
+interface Base {
+    fun base(): String
+}
+
+interface Derived : Base {
+    fun derived(): String
+}
+
+class Impl : Derived {
+    override fun base(): String = "b"
+    override fun derived(): String = "d"
+}
+""",
+    )
+    return project_path
+
+
+def test_kotlin_interface_extending_interface_emits_inherits(
+    kotlin_interface_extends_interface_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    create_and_run_updater(
+        kotlin_interface_extends_interface_project,
+        mock_ingestor,
+        skip_if_missing="kotlin",
+    )
+
+    inherits = get_relationships(mock_ingestor, "INHERITS")
+    implements = get_relationships(mock_ingestor, "IMPLEMENTS")
+
+    ingested_interfaces = get_node_names(mock_ingestor, NodeType.INTERFACE)
+
+    derived_inherits_targets = _edge_targets(inherits, "Derived")
+    derived_implements_targets = _edge_targets(implements, "Derived")
+
+    # Derived (Interface) extending Base (Interface) must be INHERITS.
+    assert any(t in ingested_interfaces for t in derived_inherits_targets), (
+        f"Derived should INHERITS Base (Interface→Interface), got "
+        f"inherits={derived_inherits_targets}, interfaces={ingested_interfaces}"
+    )
+    # And must NOT emit IMPLEMENTS — that edge type is reserved for
+    # non-interface child → interface parent.
+    assert not derived_implements_targets, (
+        f"Interface extending Interface must not emit IMPLEMENTS, got "
+        f"{derived_implements_targets}"
+    )
+
+    # Sanity: the class that ultimately implements the chain still uses
+    # IMPLEMENTS for its direct interface parent.
+    impl_implements_targets = _edge_targets(implements, "Impl")
+    assert any(t in ingested_interfaces for t in impl_implements_targets), (
+        f"Impl should still IMPLEMENTS Derived, got {impl_implements_targets}"
+    )
+
+
 def test_kotlin_cross_file_implements_resolves_correctly(
     kotlin_cross_file_project: Path,
     mock_ingestor: MagicMock,

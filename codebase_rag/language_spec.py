@@ -550,6 +550,10 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         import_node_types=cs.SPEC_KOTLIN_IMPORT_TYPES,
         import_from_node_types=cs.SPEC_KOTLIN_IMPORT_TYPES,
         package_indicators=cs.SPEC_KOTLIN_PACKAGE_INDICATORS,
+        # `.kts` is shared with Kotlin Gradle build scripts (build.gradle.kts),
+        # which are common in pure-Java repos. Require an actual `.kt` file
+        # to activate Kotlin's package_indicators.
+        package_source_extensions=(cs.EXT_KT,),
         function_query="""
         (function_declaration
             name: (identifier) @name) @function

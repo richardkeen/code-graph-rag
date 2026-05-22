@@ -20,6 +20,7 @@ from ..types_defs import (
 )
 from .call_resolver import CallResolver
 from .cpp import utils as cpp_utils
+from .handlers import get_handler
 from .hash_generator import generate_unique_hash
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
@@ -606,6 +607,11 @@ class CallProcessor:
         captures = cursor.captures(root_node)
         class_nodes = captures.get(cs.CAPTURE_CLASS, [])
 
+        # Use the same hook class ingestion uses, so languages whose tree-sitter
+        # grammar exposes class bodies as a child node rather than a `body` field
+        # (e.g. Kotlin) still get methods walked for CALLS.
+        handler = get_handler(language)
+
         for class_node in class_nodes:
             if not isinstance(class_node, Node):
                 continue
@@ -614,7 +620,7 @@ class CallProcessor:
                 if not class_name:
                     continue
                 class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
-                if body_node := class_node.child_by_field_name(cs.FIELD_BODY):
+                if body_node := handler.find_class_body(class_node):
                     self._process_methods_in_class(
                         body_node, class_qn, module_qn, language, queries
                     )

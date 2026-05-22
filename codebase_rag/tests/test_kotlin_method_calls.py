@@ -94,3 +94,54 @@ def test_kotlin_calls_ingest_does_not_crash(
     )
     # Ingestion completed without raising.
     _ = get_relationships(mock_ingestor, "CALLS")
+
+
+@pytest.fixture
+def kotlin_method_calls_project(temp_repo: Path) -> Path:
+    """Calls inside a class method. tree-sitter-kotlin class nodes don't
+    expose a `body` field, so call_processor must use the handler's
+    find_class_body hook to walk methods."""
+    project_path = temp_repo / "kotlin_method_calls"
+    project_path.mkdir()
+    (project_path / "App.kt").write_text(
+        encoding="utf-8",
+        data="""
+package app
+
+class Service {
+    fun run() {
+        helper()
+        println("done")
+    }
+}
+
+fun helper() {}
+""",
+    )
+    return project_path
+
+
+def test_kotlin_class_method_calls_emit_edges(
+    kotlin_method_calls_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Regression: previously _process_calls_in_classes used
+    `class_node.child_by_field_name("body")` which returns None for Kotlin,
+    so methods inside Kotlin classes never produced CALLS edges. Routing
+    through handler.find_class_body fixes this."""
+    create_and_run_updater(
+        kotlin_method_calls_project, mock_ingestor, skip_if_missing="kotlin"
+    )
+
+    calls = get_relationships(mock_ingestor, "CALLS")
+    # Source should be the run() method's qualified name; we just need at
+    # least one CALLS edge originating from inside the Service.run method.
+    method_call_sources = {
+        call.args[0][2]
+        for call in calls
+        if ".Service.run" in call.args[0][2]
+    }
+    assert method_call_sources, (
+        f"Expected CALLS edges originating from Service.run, got "
+        f"{[call.args[0][2] for call in calls]}"
+    )

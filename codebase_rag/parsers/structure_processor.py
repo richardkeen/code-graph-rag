@@ -38,25 +38,35 @@ class StructureProcessor:
 
     def identify_structure(self) -> None:
         directories = {self.repo_path}
+        # Extensions are collected only from non-skipped files. Excluded dirs
+        # (vendor/node_modules/.git/...) must not contribute, otherwise a
+        # `vendor/foo.kt` in an otherwise-Java repo would spuriously enable
+        # Kotlin's package indicators.
         existing_extensions: set[str] = set()
         for path in self.repo_path.rglob(cs.GLOB_ALL):
+            if should_skip_path(
+                path,
+                self.repo_path,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
+            ):
+                continue
             if path.is_dir():
-                if not should_skip_path(
-                    path,
-                    self.repo_path,
-                    exclude_paths=self.exclude_paths,
-                    unignore_paths=self.unignore_paths,
-                ):
-                    directories.add(path)
+                directories.add(path)
             else:
                 existing_extensions.add(path.suffix)
 
         package_indicators: set[str] = set()
         for lang_queries in self.queries.values():
             lang_config = lang_queries[cs.QUERY_CONFIG]
-            if lang_config.package_indicators and any(
-                ext in existing_extensions for ext in lang_config.file_extensions
-            ):
+            if not lang_config.package_indicators:
+                continue
+            source_extensions = (
+                lang_config.package_source_extensions
+                if lang_config.package_source_extensions is not None
+                else lang_config.file_extensions
+            )
+            if any(ext in existing_extensions for ext in source_extensions):
                 package_indicators.update(lang_config.package_indicators)
 
         for root in sorted(directories):

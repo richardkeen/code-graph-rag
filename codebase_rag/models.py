@@ -67,6 +67,13 @@ class LanguageSpec:
     name_field: str = "name"
     body_field: str = "body"
     package_indicators: tuple[str, ...] = ()
+    # Extensions whose presence in the repo proves this language has real
+    # sources, for the purpose of activating `package_indicators`. Defaults
+    # to file_extensions. Override when an extension is shared with build
+    # scripts that exist in non-source-bearing repos (e.g. Kotlin uses
+    # (".kt",) so `build.gradle.kts` alone in a Java repo doesn't activate
+    # Kotlin's package indicators).
+    package_source_extensions: tuple[str, ...] | None = None
     function_query: str | None = None
     class_query: str | None = None
     call_query: str | None = None
