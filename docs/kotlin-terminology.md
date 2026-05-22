@@ -62,7 +62,7 @@ The tables below disambiguate.
 
 ## Notable simplifications
 
-- **Companion objects** are represented as a `Class` named `Companion`, attached to the enclosing class via `DEFINES_METHOD` for its members.
+- **Companion objects** are represented as a `Class` node (typically named `Companion`), nested under the enclosing class via `DEFINES` edges. Companion members are connected as `(Companion)-[:DEFINES_METHOD]->(Method)` — there is no direct `(EnclosingClass)-[:DEFINES_METHOD]->` edge for companion members.
 - **Extension functions** are top-level `Function` nodes; the receiver type is encoded inside `qualified_name` rather than as a structural relationship.
 - **Sealed-class hierarchies** use `INHERITS` edges from each variant `Class` back to the sealed parent.
 - **Data, sealed, value, and inline classes** receive no special treatment — they are `Class` nodes like any other, distinguishable only by inspecting their `decorators` property.

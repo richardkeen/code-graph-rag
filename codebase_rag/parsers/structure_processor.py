@@ -38,14 +38,26 @@ class StructureProcessor:
 
     def identify_structure(self) -> None:
         directories = {self.repo_path}
+        existing_extensions: set[str] = set()
         for path in self.repo_path.rglob(cs.GLOB_ALL):
-            if path.is_dir() and not should_skip_path(
-                path,
-                self.repo_path,
-                exclude_paths=self.exclude_paths,
-                unignore_paths=self.unignore_paths,
+            if path.is_dir():
+                if not should_skip_path(
+                    path,
+                    self.repo_path,
+                    exclude_paths=self.exclude_paths,
+                    unignore_paths=self.unignore_paths,
+                ):
+                    directories.add(path)
+            else:
+                existing_extensions.add(path.suffix)
+
+        package_indicators: set[str] = set()
+        for lang_queries in self.queries.values():
+            lang_config = lang_queries[cs.QUERY_CONFIG]
+            if lang_config.package_indicators and any(
+                ext in existing_extensions for ext in lang_config.file_extensions
             ):
-                directories.add(path)
+                package_indicators.update(lang_config.package_indicators)
 
         for root in sorted(directories):
             relative_root = root.relative_to(self.repo_path)
@@ -54,11 +66,6 @@ class StructureProcessor:
             parent_container_qn = self.structural_elements.get(parent_rel_path)
 
             is_package = False
-            package_indicators: set[str] = set()
-
-            for lang_queries in self.queries.values():
-                lang_config = lang_queries[cs.QUERY_CONFIG]
-                package_indicators.update(lang_config.package_indicators)
 
             for indicator in package_indicators:
                 if (root / indicator).exists():
