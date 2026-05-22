@@ -41,7 +41,7 @@ def _resolve_kotlin_parent(
     simple_name = parent_qn.rsplit(SEPARATOR_DOT, 1)[-1]
     candidates = simple_name_lookup.get(simple_name, set())
     best_class_qn: str | None = None
-    for candidate_qn in candidates:
+    for candidate_qn in sorted(candidates):
         candidate_type = function_registry.get(candidate_qn, None)
         if candidate_type == NodeType.INTERFACE:
             return NodeType.INTERFACE, candidate_qn

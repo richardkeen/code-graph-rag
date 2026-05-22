@@ -76,6 +76,7 @@ class ClassIngestMixin:
     module_qn_to_file_path: dict[str, Path]
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
+    kotlin_class_qns: set[str]
     _handler: LanguageHandler
 
     @abstractmethod

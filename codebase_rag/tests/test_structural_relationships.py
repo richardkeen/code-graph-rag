@@ -999,3 +999,52 @@ def test_edge_cases_empty_folders_and_special_files(
             for call in all_calls
         )
         assert special_file_found, f"Special file {special_file} should be tracked"
+
+
+def test_kotlin_gradle_module_detected_as_package(
+    tmp_path: Path, mock_ingestor: MagicMock
+) -> None:
+    """build.gradle.kts triggers Package detection for Kotlin Gradle modules.
+
+    Mirrors the tests for __init__.py (Python) and Cargo.toml (Rust): a
+    directory containing the indicator file must be identified as a Package
+    with the correct qualified name and attached to its parent via
+    CONTAINS_PACKAGE.
+    """
+    project_path = tmp_path / "android_project"
+    project_path.mkdir()
+
+    module_dir = project_path / "mymodule"
+    module_dir.mkdir()
+    (module_dir / "build.gradle.kts").write_text('plugins { id("com.android.library") }')
+    src = module_dir / "src" / "main" / "kotlin"
+    src.mkdir(parents=True)
+    (src / "Greeter.kt").write_text("package mymodule\nclass Greeter")
+
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=project_path,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    project_name = project_path.name
+    package_qn = f"{project_name}.mymodule"
+
+    package_relationships = [
+        call
+        for call in mock_ingestor.ensure_relationship_batch.call_args_list
+        if len(call[0]) >= 3 and call[0][1] == "CONTAINS_PACKAGE"
+    ]
+
+    found = any(
+        call[0][0] == ("Project", "name", project_name)
+        and call[0][2] == ("Package", "qualified_name", package_qn)
+        for call in package_relationships
+    )
+    assert found, (
+        f"Expected Project -[CONTAINS_PACKAGE]-> Package({package_qn}); "
+        f"package relationships found: {[(c[0][0], c[0][2]) for c in package_relationships]}"
+    )
