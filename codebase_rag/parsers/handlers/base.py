@@ -62,6 +62,9 @@ class BaseLanguageHandler:
     def extract_decorators(self, node: ASTNode) -> list[str]:
         return []
 
+    def find_class_body(self, class_node: ASTNode) -> ASTNode | None:
+        return class_node.child_by_field_name(cs.TS_FIELD_BODY)
+
     def build_nested_function_qn(
         self,
         func_node: ASTNode,

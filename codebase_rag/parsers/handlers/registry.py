@@ -8,6 +8,7 @@ from .cpp import CppHandler
 from .frontend import CssHandler, HtmlHandler
 from .java import JavaHandler
 from .js_ts import JsTsHandler
+from .kotlin import KotlinHandler
 from .lua import LuaHandler
 from .protocol import LanguageHandler
 from .python import PythonHandler
@@ -20,6 +21,7 @@ _HANDLERS: dict[SupportedLanguage, type[BaseLanguageHandler]] = {
     SupportedLanguage.CPP: CppHandler,
     SupportedLanguage.RUST: RustHandler,
     SupportedLanguage.JAVA: JavaHandler,
+    SupportedLanguage.KOTLIN: KotlinHandler,
     SupportedLanguage.LUA: LuaHandler,
     SupportedLanguage.CSS: CssHandler,
     SupportedLanguage.HTML: HtmlHandler,

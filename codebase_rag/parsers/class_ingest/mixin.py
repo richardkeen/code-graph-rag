@@ -11,11 +11,13 @@ from ... import constants as cs
 from ... import logs
 from ...types_defs import ASTNode, PropertyDict
 from ..java import utils as java_utils
+from ..kotlin import utils as kotlin_utils
 from ..py import resolve_class_name
 from ..rs import utils as rs_utils
 from ..utils import ingest_method, safe_decode_text
 from . import cpp_modules
 from . import identity as id_
+from . import kotlin_inheritance as ki
 from . import method_override as mo
 from . import node_type as nt
 from . import relationships as rel
@@ -28,7 +30,41 @@ if TYPE_CHECKING:
         LanguageQueries,
         SimpleNameLookup,
     )
+    from ..handlers import LanguageHandler
     from ..import_processor import ImportProcessor
+
+
+_KOTLIN_CLASS_LIKE_TYPES = frozenset(
+    {
+        cs.TS_KOTLIN_CLASS_DECLARATION,
+        cs.TS_KOTLIN_OBJECT_DECLARATION,
+        cs.TS_KOTLIN_COMPANION_OBJECT,
+    }
+)
+
+
+def _is_direct_class_member(method_node: Node, class_node: Node) -> bool:
+    """Return True iff the nearest class-like ancestor of method_node is class_node.
+
+    The Kotlin function query is unanchored, so when running it against an outer
+    class's body it also captures functions inside nested companions / objects /
+    classes. Without this filter, the same function gets ingested twice (once for
+    the outer class with the wrong FQN, once for the nested class with the right
+    FQN). We process each method exactly once — when its immediate enclosing
+    class-like container is being walked.
+
+    Compare by tree-sitter node `id` because the Python bindings wrap each
+    `.parent` lookup in a fresh object — `is` and `==` are not reliable.
+    """
+    target_id = class_node.id
+    current = method_node.parent
+    while current is not None:
+        if current.id == target_id:
+            return True
+        if current.type in _KOTLIN_CLASS_LIKE_TYPES:
+            return False
+        current = current.parent
+    return False
 
 
 class ClassIngestMixin:
@@ -40,6 +76,8 @@ class ClassIngestMixin:
     module_qn_to_file_path: dict[str, Path]
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
+    pending_inheritance: dict[str, list[str]]
+    _handler: LanguageHandler
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -159,6 +197,7 @@ class ClassIngestMixin:
             self.import_processor,
             self._resolve_to_qn,
             self.function_registry,
+            self.pending_inheritance,
         )
         self._ingest_class_methods(class_node, class_qn, language, lang_queries)
 
@@ -173,7 +212,7 @@ class ClassIngestMixin:
             return
 
         class_qn = f"{module_qn}.{impl_target}"
-        body_node = class_node.child_by_field_name("body")
+        body_node = self._handler.find_class_body(class_node)
         method_query = lang_queries[cs.QUERY_FUNCTIONS]
 
         if not body_node or not method_query:
@@ -201,7 +240,7 @@ class ClassIngestMixin:
         language: cs.SupportedLanguage,
         lang_queries: LanguageQueries,
     ) -> None:
-        body_node = class_node.child_by_field_name("body")
+        body_node = self._handler.find_class_body(class_node)
         method_query = lang_queries[cs.QUERY_FUNCTIONS]
         if not body_node or not method_query:
             return
@@ -210,6 +249,11 @@ class ClassIngestMixin:
         method_captures = method_cursor.captures(body_node)
         for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
             if not isinstance(method_node, Node):
+                continue
+
+            if language == cs.SupportedLanguage.KOTLIN and not _is_direct_class_member(
+                method_node, class_node
+            ):
                 continue
 
             method_qualified_name = None
@@ -221,6 +265,12 @@ class ClassIngestMixin:
                         f"({','.join(parameters)})" if parameters else cs.EMPTY_PARENS
                     )
                     method_qualified_name = f"{class_qn}.{method_name}{param_sig}"
+            elif language == cs.SupportedLanguage.KOTLIN:
+                kotlin_info = kotlin_utils.extract_function_info(method_node)
+                if kotlin_name := kotlin_info.name:
+                    method_qualified_name = self._handler.build_method_qualified_name(
+                        class_qn, kotlin_name, method_node
+                    )
 
             ingest_method(
                 method_node,
@@ -271,6 +321,14 @@ class ClassIngestMixin:
         mo.process_all_method_overrides(
             self.function_registry,
             self.class_inheritance,
+            self.ingestor,
+        )
+
+    def process_pending_inheritance(self) -> None:
+        ki.process_all_kotlin_inheritance_edges(
+            self.function_registry,
+            self.pending_inheritance,
+            self.simple_name_lookup,
             self.ingestor,
         )
 

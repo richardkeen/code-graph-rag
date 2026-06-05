@@ -1,0 +1,73 @@
+# Kotlin terminology mapping
+
+This document explains how Kotlin language constructs map onto the graph's language-agnostic schema.
+
+## Why this matters
+
+The graph uses node labels that don't always match Kotlin vernacular. Most notably:
+
+- **`Module`** in this graph is a single Kotlin source file (the AST root), but **"module"** in Gradle/Kotlin parlance is a build unit (a directory with `build.gradle.kts`). The graph does **not** model Gradle modules.
+- **`Package`** in Kotlin is the namespace declared at the top of a file (`package net.foo.bar`). It is recorded inside `qualified_name` strings, not as a `Package` graph node. Kotlin produces no `Package` graph nodes — directories ingest as `Folder`, identically to Java.
+
+The tables below disambiguate.
+
+## Node types
+
+| Concept | Graph term | Kotlin term |
+|---|---|---|
+| Repository or top-level project | `Project` | the repository root |
+| Any directory | `Folder` | every directory, including Gradle modules and source-set directories like `src/main/kotlin/...` |
+| Any non-source file on disk | `File` | file on disk (`build.gradle.kts`, `README.md`, resources, …) |
+| Source file / compilation unit | `Module` | Kotlin file (`.kt`, `.kts`) — the tree-sitter `source_file` AST root |
+| Class-like declaration | `Class` | `class`, `object`, `companion object`, `data class`, `sealed class`, `value class`, `typealias` |
+| Enum class | `Enum` | `enum class` (individual `enum_entry` constants are not yet represented as graph nodes) |
+| Interface | `Interface` | `interface Foo {}` declarations |
+| Top-level function | `Function` | top-level function or extension function |
+| Member function | `Method` | member function inside a class/object/companion; constructors; property getters and setters |
+| Lambda / anonymous function | `AnonymousFunction` | lambda expression or `anonymous_function` |
+| External dependency | `ExternalPackage` | (not currently populated for Kotlin — `pyproject.toml` is the only manifest the dependency parser handles today) |
+
+### Notes on overloaded mappings
+
+- Kotlin `interface` declarations map to **`Interface`** — although tree-sitter-kotlin uses `class_declaration` for both, the classifier checks for the `interface` keyword as a direct child to distinguish them.
+- Kotlin `enum class` declarations map to **`Enum`** — the classifier inspects the `enum` modifier on `class_declaration` to make the distinction. Individual enum constants (`enum_entry` nodes — e.g. `RED`, `GREEN`, `BLUE`) are not yet represented as graph nodes; only the enum class itself is.
+- `typealias` is represented as `Class` in this graph.
+
+## Node types not used by Kotlin
+
+| Graph term | Why |
+|---|---|
+| `Package` | Kotlin sets no `package_indicators`; directories ingest as `Folder`. The Kotlin namespace declared at the top of each file is captured inside `qualified_name` strings instead. |
+| `Union` | Concept not in Kotlin |
+| `Type` | Kotlin typealiases map to `Class`, not `Type` |
+| `ModuleInterface` / `ModuleImplementation` | TypeScript / C++20 module-system concepts |
+| `ExternalPackage` | Kotlin dependencies (Gradle declarations) are not yet ingested |
+
+## Relationships
+
+| Concept | Graph term | Notes |
+|---|---|---|
+| Project contains a directory | `(Project)-[:CONTAINS_FOLDER]->(Folder)` | Every directory under the repo root |
+| Directory contains a sub-directory | `(Folder)-[:CONTAINS_FOLDER]->(Folder)` | Nested directories, including Gradle modules and source-set directories |
+| Directory contains a non-source file | `(Folder)-[:CONTAINS_FILE]->(File)` | `build.gradle.kts`, `README.md`, resources, … |
+| Folder contains a Kotlin file | `(Folder)-[:CONTAINS_MODULE]->(Module)` | One `Module` per `.kt` file |
+| File top-level definitions | `(Module)-[:DEFINES]->(Class\|Function\|AnonymousFunction)` | Top-level functions, classes, objects, lambdas |
+| Class methods | `(Class)-[:DEFINES_METHOD]->(Method)` | Includes companion-object methods and property accessors |
+| Inheritance | `(Class)-[:INHERITS]->(Class)` | Kotlin `: ParentClass(...)` where the parent is a class |
+| Interface implementation | `(Class)-[:IMPLEMENTS]->(Interface)` | Kotlin `: SomeInterface` where the parent is an interface. Resolved in a deferred pass after every file is ingested, since Kotlin's grammar uses the same `delegation_specifier` for both inheritance and implementation. |
+| Method override | `(Method)-[:OVERRIDES]->(Method)` | Kotlin `override fun ...` |
+| Import | `(Module)-[:IMPORTS]->(Module)` | Kotlin `import …` — resolved when the target module exists in the graph |
+| Function or method call | `(Function\|Method\|Module)-[:CALLS]->(Function\|Method)` | Module-level callers exist for top-level call sites; lambda call sites are attributed to their host function |
+
+## Notable simplifications
+
+- **Companion objects** are represented as a `Class` node (typically named `Companion`), nested under the enclosing class via `DEFINES` edges. Companion members are connected as `(Companion)-[:DEFINES_METHOD]->(Method)` — there is no direct `(EnclosingClass)-[:DEFINES_METHOD]->` edge for companion members.
+- **Extension functions** are top-level `Function` nodes; the receiver type is encoded inside `qualified_name` rather than as a structural relationship.
+- **Sealed-class hierarchies** use `INHERITS` edges from each variant `Class` back to the sealed parent.
+- **Data, sealed, value, and inline classes** receive no special treatment — they are `Class` nodes like any other, distinguishable only by inspecting their `decorators` property.
+- **Property getters/setters** are stored as `Method` nodes.
+
+## See also
+
+- [Kotlin support plan](kotlin-support-plan.md) — design and implementation plan for Kotlin support
+- The Graph Schema section of the [README](../README.md#-graph-schema) — language-agnostic node and relationship definitions

@@ -6,6 +6,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ... import logs
 from ...types_defs import NodeType
+from ..kotlin import utils as kotlin_utils
 from ..utils import safe_decode_with_fallback
 
 
@@ -22,6 +23,19 @@ def determine_node_type(
         case cs.TS_ENUM_DECLARATION | cs.TS_ENUM_SPECIFIER | cs.TS_ENUM_CLASS_SPECIFIER:
             logger.info(logs.CLASS_FOUND_ENUM.format(name=class_name, qn=class_qn))
             return NodeType.ENUM
+        case cs.TS_KOTLIN_CLASS_DECLARATION if (
+            language == cs.SupportedLanguage.KOTLIN
+            and cs.KOTLIN_MODIFIER_ENUM
+            in kotlin_utils.extract_class_modifiers(class_node)
+        ):
+            logger.info(logs.CLASS_FOUND_ENUM.format(name=class_name, qn=class_qn))
+            return NodeType.ENUM
+        case cs.TS_KOTLIN_CLASS_DECLARATION if (
+            language == cs.SupportedLanguage.KOTLIN
+            and kotlin_utils.is_kotlin_interface(class_node)
+        ):
+            logger.info(logs.CLASS_FOUND_INTERFACE.format(name=class_name, qn=class_qn))
+            return NodeType.INTERFACE
         case cs.TS_TYPE_ALIAS_DECLARATION:
             logger.info(logs.CLASS_FOUND_TYPE.format(name=class_name, qn=class_qn))
             return NodeType.TYPE

@@ -27,6 +27,7 @@ def create_class_relationships(
     import_processor: ImportProcessor,
     resolve_to_qn: Callable[[str, str], str],
     function_registry: FunctionRegistryTrieProtocol,
+    pending_inheritance: dict[str, list[str]],
 ) -> None:
     from loguru import logger
 
@@ -55,10 +56,17 @@ def create_class_relationships(
             (node_type, cs.KEY_QUALIFIED_NAME, class_qn),
         )
 
-    for parent_class_qn in parent_classes:
-        create_inheritance_relationship(
-            node_type, class_qn, parent_class_qn, function_registry, ingestor
-        )
+    # Kotlin's `delegation_specifiers` block fuses class inheritance and
+    # interface implementation, so we cannot decide INHERITS vs IMPLEMENTS
+    # while parsing each file — buffer the parents and let the post-pass
+    # resolve them once every parent's NodeType is stable in the registry.
+    if language == cs.SupportedLanguage.KOTLIN:
+        pending_inheritance[class_qn] = parent_classes
+    else:
+        for parent_class_qn in parent_classes:
+            create_inheritance_relationship(
+                node_type, class_qn, parent_class_qn, function_registry, ingestor
+            )
 
     if class_node.type == cs.TS_CLASS_DECLARATION:
         for interface_qn in pe.extract_implemented_interfaces(
