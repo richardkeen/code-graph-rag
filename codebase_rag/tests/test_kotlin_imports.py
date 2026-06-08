@@ -73,3 +73,96 @@ def test_kotlin_imports_in_processor(
     assert mappings.get("List") == "kotlin.collections.List", mappings
     assert mappings.get("R") == "kotlin.text.Regex", mappings
     assert mappings.get("*kotlin.collections") == "kotlin.collections", mappings
+
+
+@pytest.fixture
+def kotlin_cross_file_import_project(temp_repo: Path) -> Path:
+    """Two Kotlin files in different packages where one imports a class from
+    the other. The Kotlin package index built lazily by ImportProcessor must
+    bridge the package-form import (`a.b.Foo`) to the canonical
+    file-path-rooted Module/Class QNs the ingestion pipeline registers.
+    """
+    project_path = temp_repo / "kotlin_xfile_imports"
+    project_path.mkdir()
+    (project_path / "Foo.kt").write_text(
+        encoding="utf-8",
+        data="""
+package a.b
+
+class Foo
+""",
+    )
+    (project_path / "Bar.kt").write_text(
+        encoding="utf-8",
+        data="""
+package c.d
+
+import a.b.Foo
+
+class Bar : Foo()
+""",
+    )
+    return project_path
+
+
+def test_kotlin_cross_file_import_resolves_to_internal_module(
+    kotlin_cross_file_import_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Regression: `import a.b.Foo` must resolve to the actual `Foo.kt`
+    Module node, not to a synthetic external `Module(qualified_name='a.b')`.
+    Without the lazy Kotlin package index, ImportProcessor falls through to
+    `_ensure_external_module_node` and creates a fake external module.
+    """
+    from codebase_rag.tests.conftest import create_and_run_updater
+
+    updater = create_and_run_updater(
+        kotlin_cross_file_import_project, mock_ingestor, skip_if_missing="kotlin"
+    )
+
+    project_name = kotlin_cross_file_import_project.name
+    bar_module_qn = f"{project_name}.Bar"
+    foo_module_qn = f"{project_name}.Foo"
+    foo_class_qn = f"{project_name}.Foo.Foo"
+
+    # 1. import_mapping carries the canonical Class QN so call resolution
+    #    can find Foo via the function_registry.
+    mappings = updater.factory.import_processor.import_mapping.get(
+        bar_module_qn, {}
+    )
+    assert mappings.get("Foo") == foo_class_qn, (
+        f"Expected import_mapping['{bar_module_qn}']['Foo'] == "
+        f"'{foo_class_qn}'; got {mappings}"
+    )
+
+    # 2. The IMPORTS edge from Bar's Module points to the actual Foo.kt
+    #    Module node, not to a synthetic external `a.b`.
+    imports_edges = [
+        c
+        for c in mock_ingestor.ensure_relationship_batch.call_args_list
+        if len(c.args) >= 3 and c.args[1] == "IMPORTS"
+    ]
+    bar_imports_targets = {
+        c.args[2][2]
+        for c in imports_edges
+        if c.args[0][2] == bar_module_qn
+    }
+    assert foo_module_qn in bar_imports_targets, (
+        f"Expected IMPORTS edge from {bar_module_qn} to {foo_module_qn}; "
+        f"got targets {bar_imports_targets}"
+    )
+
+    # 3. No synthetic external Module(qualified_name='a.b') was created.
+    external_modules = [
+        c
+        for c in mock_ingestor.ensure_node_batch.call_args_list
+        if c.args[0] == "Module" and c.args[1].get("is_external") is True
+    ]
+    bad_external = [
+        c.args[1] for c in external_modules
+        if c.args[1].get("qualified_name") == "a.b"
+    ]
+    assert not bad_external, (
+        f"Internal Kotlin package 'a.b' must not be ingested as an external "
+        f"Module; got {bad_external}"
+    )
