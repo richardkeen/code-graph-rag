@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from ... import constants as cs
 from ..kotlin import utils as kotlin_utils
@@ -11,11 +11,56 @@ if TYPE_CHECKING:
 
 
 class KotlinHandler(BaseLanguageHandler):
+    # Class-like nodes whose presence between a captured method and its
+    # enclosing class means the method belongs to a nested container, not
+    # the class currently being walked.
+    _CLASS_LIKE_TYPES: ClassVar[frozenset[str]] = frozenset(
+        {
+            cs.TS_KOTLIN_CLASS_DECLARATION,
+            cs.TS_KOTLIN_OBJECT_DECLARATION,
+            cs.TS_KOTLIN_COMPANION_OBJECT,
+        }
+    )
+
     def extract_decorators(self, node: ASTNode) -> list[str]:
         return kotlin_utils.extract_annotations(node)
 
     def find_class_body(self, class_node: ASTNode) -> ASTNode | None:
-        return kotlin_utils.find_class_body(class_node)
+        # tree-sitter-kotlin places `primary_constructor` as a sibling of
+        # `class_body` rather than a descendant, and a class with only an
+        # inline primary constructor (`class Person(val name: String)`)
+        # has no `class_body` at all. Returning `class_node` is the
+        # smallest scope that covers every direct member; nested-class
+        # captures are filtered by `is_direct_class_member` below.
+        return class_node
+
+    def is_direct_class_member(
+        self, method_node: ASTNode, class_node: ASTNode
+    ) -> bool:
+        """Return True iff the nearest class-like ancestor of method_node is class_node.
+
+        The Kotlin function query is unanchored, so when running it against an outer
+        class's scope it also captures functions inside nested companions / objects /
+        classes. Without this filter, the same function gets ingested twice (once for
+        the outer class with the wrong FQN, once for the nested class with the right
+        FQN). We process each method exactly once — when its immediate enclosing
+        class-like container is being walked.
+
+        Compare by tree-sitter node `id` because the Python bindings wrap each
+        `.parent` lookup in a fresh object — `is` and `==` are not reliable.
+        """
+        target_id = class_node.id
+        current = method_node.parent
+        while current is not None:
+            if current.id == target_id:
+                return True
+            if current.type in self._CLASS_LIKE_TYPES:
+                return False
+            current = current.parent
+        return False
+
+    def extract_method_name(self, method_node: ASTNode) -> str | None:
+        return kotlin_utils.extract_function_info(method_node).name
 
     def build_method_qualified_name(
         self,

@@ -63,7 +63,36 @@ class BaseLanguageHandler:
         return []
 
     def find_class_body(self, class_node: ASTNode) -> ASTNode | None:
+        """Return the scope to run member queries against — the `body` field
+        by default. Languages whose grammar places members outside the body
+        (e.g. Kotlin's `primary_constructor`) can widen this and rely on
+        `is_direct_class_member` to filter spurious captures.
+        """
         return class_node.child_by_field_name(cs.TS_FIELD_BODY)
+
+    def is_direct_class_member(
+        self, method_node: ASTNode, class_node: ASTNode
+    ) -> bool:
+        """Default: every captured member belongs to the class being walked.
+
+        Override only when `find_class_body` returns a node wide enough to
+        capture members of nested classes/objects, in which case the
+        override should walk parents and return False if a class-like
+        ancestor sits between the captured node and `class_node`.
+        """
+        return True
+
+    def extract_method_name(self, method_node: ASTNode) -> str | None:
+        """Default: take the `name` field's text. Languages whose method
+        nodes don't expose a top-level `name` field (C++ wraps the name
+        inside `function_declarator`, Kotlin uses positional children
+        accessed via dedicated walkers) should override.
+        """
+        if (
+            name_node := method_node.child_by_field_name(cs.FIELD_NAME)
+        ) and name_node.text:
+            return safe_decode_text(name_node)
+        return None
 
     def build_nested_function_qn(
         self,
