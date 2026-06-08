@@ -275,3 +275,34 @@ def test_kotlin_cross_file_implements_resolves_correctly(
     assert not any(t in ingested_interfaces for t in client_inherits_targets), (
         f"ClientImpl should not INHERITS an Interface node, got {client_inherits_targets}"
     )
+
+
+def test_kotlin_cross_file_override_emits_overrides_edge(
+    kotlin_cross_file_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Cross-file Kotlin overrides resolve through the deferred pass.
+
+    Regression guard for the bug where pending_inheritance kept the
+    package-rooted parent QN (e.g. `crossfile.Greeter`) after the deferred
+    pass resolved IMPLEMENTS edges, leaving the subsequent
+    process_all_method_overrides pass unable to find the canonical Greeter
+    QN in the registry. ClientImpl.greet must therefore OVERRIDES
+    Greeter.greet across files.
+    """
+    create_and_run_updater(
+        kotlin_cross_file_project, mock_ingestor, skip_if_missing="kotlin"
+    )
+
+    overrides = get_relationships(mock_ingestor, "OVERRIDES")
+
+    matching = [
+        call
+        for call in overrides
+        if call.args[0][2].endswith("ClientImpl.greet")
+        and call.args[2][2].endswith("Greeter.greet")
+    ]
+    assert matching, (
+        "Expected ClientImpl.greet -[OVERRIDES]-> Greeter.greet across files; "
+        f"all OVERRIDES edges: {[(c.args[0][2], c.args[2][2]) for c in overrides]}"
+    )

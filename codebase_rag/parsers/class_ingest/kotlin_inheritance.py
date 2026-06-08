@@ -72,10 +72,17 @@ def process_all_kotlin_inheritance_edges(
 
     for child_qn, parent_qns in pending_inheritance.items():
         child_node_type = function_registry.get(child_qn, NodeType.CLASS)
-        for parent_qn in parent_qns:
+        for i, parent_qn in enumerate(parent_qns):
             parent_node_type, resolved_qn = _resolve_kotlin_parent(
                 parent_qn, function_registry, simple_name_lookup
             )
+            # parent_qns is the same list object as class_inheritance[child_qn]
+            # (see relationships.create_class_relationships). Writing the
+            # resolved canonical QN back here makes downstream passes —
+            # notably process_all_method_overrides — see the registry-rooted
+            # form and walk cross-file Kotlin inheritance correctly.
+            if resolved_qn != parent_qn:
+                parent_qns[i] = resolved_qn
             # IMPLEMENTS is reserved for non-interface child → Interface parent
             # (the schema rule is Class/Enum/Object → Interface). When an
             # Interface extends another Interface, that's INHERITS.
