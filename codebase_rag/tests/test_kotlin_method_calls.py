@@ -145,3 +145,116 @@ def test_kotlin_class_method_calls_emit_edges(
         f"Expected CALLS edges originating from Service.run, got "
         f"{[call.args[0][2] for call in calls]}"
     )
+
+
+@pytest.fixture
+def kotlin_parameterized_calls_project(temp_repo: Path) -> Path:
+    """A class with parameterised methods that call each other. The caller
+    QN on the CALLS edge must include the parameter signature, otherwise
+    Memgraph's MATCH on the source endpoint cannot find the ingested
+    Method node and the edge is silently dropped.
+    """
+    project_path = temp_repo / "kotlin_param_calls"
+    project_path.mkdir()
+    (project_path / "Calc.kt").write_text(
+        encoding="utf-8",
+        data="""
+package app
+
+class Calc {
+    fun add(x: Int, y: Int): Int {
+        return helper(x)
+    }
+
+    fun helper(n: Int): Int {
+        return n + 1
+    }
+}
+""",
+    )
+    return project_path
+
+
+def test_kotlin_parameterized_caller_qn_includes_signature(
+    kotlin_parameterized_calls_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Regression: caller QN for Kotlin methods must carry the parameter
+    signature so it matches the parameter-signature-qualified Method node
+    QN that ingestion produced. Without this, CALLS edges from
+    parameterised Kotlin methods are silently dropped at MATCH time.
+    """
+    create_and_run_updater(
+        kotlin_parameterized_calls_project,
+        mock_ingestor,
+        skip_if_missing="kotlin",
+    )
+
+    calls = get_relationships(mock_ingestor, "CALLS")
+    add_sources = {
+        call.args[0][2] for call in calls if ".Calc.add" in call.args[0][2]
+    }
+    assert any("(" in source and ")" in source for source in add_sources), (
+        f"Expected at least one CALLS source qn for Calc.add to include a "
+        f"parameter signature, got {add_sources}"
+    )
+
+
+@pytest.fixture
+def kotlin_companion_calls_project(temp_repo: Path) -> Path:
+    """Companion-object methods are siblings of the outer class's body
+    walker scope (KotlinHandler.find_class_body returns class_node).
+    Without is_direct_class_member filtering, a call inside a companion
+    method gets attributed to the outer class qualified name.
+    """
+    project_path = temp_repo / "kotlin_companion_calls"
+    project_path.mkdir()
+    (project_path / "Outer.kt").write_text(
+        encoding="utf-8",
+        data="""
+package app
+
+class Outer {
+    fun outerFn() {
+        println("outer")
+    }
+
+    companion object {
+        fun makeOne(): Outer {
+            return Outer()
+        }
+    }
+}
+""",
+    )
+    return project_path
+
+
+def test_kotlin_companion_calls_attributed_to_companion_not_outer(
+    kotlin_companion_calls_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Regression: with KotlinHandler.find_class_body returning class_node,
+    the function query running over the outer Class also captures methods
+    defined inside the companion. Without the is_direct_class_member
+    filter on call_processor, those captures get attributed to the outer
+    class qualified name and produce CALLS edges from `Outer.makeOne`
+    rather than from `Outer.Companion.makeOne`.
+    """
+    create_and_run_updater(
+        kotlin_companion_calls_project,
+        mock_ingestor,
+        skip_if_missing="kotlin",
+    )
+
+    calls = get_relationships(mock_ingestor, "CALLS")
+    sources = {call.args[0][2] for call in calls}
+
+    # No CALLS edge should originate from `Outer.makeOne` directly — that
+    # would mean the companion's makeOne was wrongly attributed to Outer.
+    bad_sources = {s for s in sources if s.endswith(".Outer.makeOne")}
+    assert not bad_sources, (
+        f"Companion method makeOne should not produce CALLS edges from "
+        f"Outer.makeOne (it belongs to the Companion class). Bad sources: "
+        f"{bad_sources}; all sources: {sources}"
+    )

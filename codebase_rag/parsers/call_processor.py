@@ -9,9 +9,10 @@ from tree_sitter import Node, QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
-from ..language_spec import LanguageSpec
+from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
 from ..models import CallProcessingMetrics
 from ..services import IngestorProtocol
+from ..utils.fqn_resolver import resolve_fqn_from_ast
 from ..types_defs import (
     FunctionRegistryTrieProtocol,
     LanguageQueries,
@@ -108,7 +109,9 @@ class CallProcessor:
             )
 
         try:
-            self._process_calls_in_classes(root_node, module_qn, language, queries)
+            self._process_calls_in_classes(
+                root_node, module_qn, language, queries, file_path
+            )
         except Exception as e:
             had_error = True
             logger.error(
@@ -555,6 +558,7 @@ class CallProcessor:
     def _process_methods_in_class(
         self,
         body_node: Node,
+        class_node: Node,
         class_qn: str,
         module_qn: str,
         language: cs.SupportedLanguage,
@@ -563,6 +567,12 @@ class CallProcessor:
         method_query = queries[language][cs.QUERY_FUNCTIONS]
         if not method_query:
             return
+        # Mirror class ingestion: route name/QN construction through the
+        # handler so caller method QNs match the parameter-signature form
+        # ingested for Kotlin overloads/constructors. Filter out captures
+        # belonging to nested companions/objects/inner classes — they get
+        # processed separately when their own class node is walked.
+        handler = get_handler(language)
         method_cursor = QueryCursor(method_query)
         method_captures = method_cursor.captures(body_node)
         method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
@@ -570,10 +580,36 @@ class CallProcessor:
             if not isinstance(method_node, Node):
                 continue
             try:
-                method_name = self._get_node_name(method_node)
-                if not method_name:
+                if not handler.is_direct_class_member(method_node, class_node):
                     continue
-                method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+
+                method_qn: str | None = None
+                if language == cs.SupportedLanguage.JAVA:
+                    # Java's caller_qn format must match mixin's inline
+                    # ingestion format (commas without spaces, EMPTY_PARENS
+                    # for zero-args). JavaHandler.build_method_qualified_name
+                    # uses a different format and is intentionally untouched.
+                    from .java import utils as java_utils
+
+                    method_info = java_utils.extract_method_info(method_node)
+                    if method_name := method_info.get(cs.KEY_NAME):
+                        parameters = method_info.get(cs.KEY_PARAMETERS, [])
+                        param_sig = (
+                            f"({','.join(parameters)})"
+                            if parameters
+                            else cs.EMPTY_PARENS
+                        )
+                        method_qn = f"{class_qn}.{method_name}{param_sig}"
+                elif method_name := (
+                    handler.extract_method_name(method_node)
+                    or self._get_node_name(method_node)
+                ):
+                    method_qn = handler.build_method_qualified_name(
+                        class_qn, method_name, method_node
+                    )
+
+                if not method_qn:
+                    continue
                 self._ingest_function_calls(
                     method_node,
                     method_qn,
@@ -599,6 +635,7 @@ class CallProcessor:
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
+        file_path: Path,
     ) -> None:
         query = queries[language][cs.QUERY_CLASSES]
         if not query:
@@ -612,17 +649,41 @@ class CallProcessor:
         # (e.g. Kotlin) still get methods walked for CALLS.
         handler = get_handler(language)
 
+        # The class query captures every class-like node in the tree, including
+        # nested classes / companions / inner objects. Resolve each to the
+        # canonical FQN the same way mixin ingests them, so caller method QNs
+        # built downstream match the ingested Method node QNs (e.g.
+        # `module.Outer.Companion.create`, not `module.Companion.create`).
+        fqn_config = LANGUAGE_FQN_SPECS.get(language)
+
         for class_node in class_nodes:
             if not isinstance(class_node, Node):
                 continue
             try:
-                class_name = self._get_class_name_for_node(class_node, language)
-                if not class_name:
-                    continue
-                class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
+                class_qn: str | None = None
+                if fqn_config is not None:
+                    class_qn = resolve_fqn_from_ast(
+                        class_node,
+                        file_path,
+                        self.repo_path,
+                        self.project_name,
+                        fqn_config,
+                    )
+                if not class_qn:
+                    class_name = self._get_class_name_for_node(
+                        class_node, language
+                    )
+                    if not class_name:
+                        continue
+                    class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
                 if body_node := handler.find_class_body(class_node):
                     self._process_methods_in_class(
-                        body_node, class_qn, module_qn, language, queries
+                        body_node,
+                        class_node,
+                        class_qn,
+                        module_qn,
+                        language,
+                        queries,
                     )
             except Exception as e:
                 logger.error(
