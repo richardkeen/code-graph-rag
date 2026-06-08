@@ -258,3 +258,54 @@ def test_kotlin_companion_calls_attributed_to_companion_not_outer(
         f"Outer.makeOne (it belongs to the Companion class). Bad sources: "
         f"{bad_sources}; all sources: {sources}"
     )
+
+
+@pytest.fixture
+def kotlin_local_function_project(temp_repo: Path) -> Path:
+    """A class method that declares a local function inside its body. Local
+    functions must not be ingested as class methods.
+    """
+    project_path = temp_repo / "kotlin_local_fn"
+    project_path.mkdir()
+    (project_path / "A.kt").write_text(
+        encoding="utf-8",
+        data="""
+package app
+
+class A {
+    fun outer() {
+        fun inner() {}
+        inner()
+    }
+}
+""",
+    )
+    return project_path
+
+
+def test_kotlin_local_function_not_classified_as_method(
+    kotlin_local_function_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Regression: KotlinHandler.is_direct_class_member must reject captures
+    that have a function-like ancestor between them and the enclosing class.
+    Otherwise, the unanchored function query — running over the whole class
+    node — picks up local declarations inside method bodies and ingests them
+    as class methods (e.g. `A.inner` for `class A { fun outer() { fun
+    inner() {} } }`).
+    """
+    from codebase_rag.tests.conftest import get_node_names
+    from codebase_rag.types_defs import NodeType
+
+    create_and_run_updater(
+        kotlin_local_function_project,
+        mock_ingestor,
+        skip_if_missing="kotlin",
+    )
+
+    methods = get_node_names(mock_ingestor, NodeType.METHOD)
+    inner_methods = {m for m in methods if m.endswith(".inner")}
+    assert not inner_methods, (
+        f"Local function `inner` should NOT ingest as a Method. "
+        f"Got methods ending in .inner: {inner_methods}; all methods: {methods}"
+    )

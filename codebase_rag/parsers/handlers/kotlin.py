@@ -21,6 +21,20 @@ class KotlinHandler(BaseLanguageHandler):
             cs.TS_KOTLIN_COMPANION_OBJECT,
         }
     )
+    # Function-like nodes whose presence between a captured function and
+    # its enclosing class means the captured node is a local declaration
+    # inside that function — not a class method.
+    _FUNCTION_LIKE_TYPES: ClassVar[frozenset[str]] = frozenset(
+        {
+            cs.TS_KOTLIN_FUNCTION_DECLARATION,
+            cs.TS_KOTLIN_PRIMARY_CONSTRUCTOR,
+            cs.TS_KOTLIN_SECONDARY_CONSTRUCTOR,
+            cs.TS_KOTLIN_ANONYMOUS_FUNCTION,
+            cs.TS_KOTLIN_LAMBDA_LITERAL,
+            cs.TS_KOTLIN_GETTER,
+            cs.TS_KOTLIN_SETTER,
+        }
+    )
 
     def extract_decorators(self, node: ASTNode) -> list[str]:
         return kotlin_utils.extract_annotations(node)
@@ -41,10 +55,15 @@ class KotlinHandler(BaseLanguageHandler):
 
         The Kotlin function query is unanchored, so when running it against an outer
         class's scope it also captures functions inside nested companions / objects /
-        classes. Without this filter, the same function gets ingested twice (once for
-        the outer class with the wrong FQN, once for the nested class with the right
-        FQN). We process each method exactly once — when its immediate enclosing
-        class-like container is being walked.
+        classes, and *local* functions declared inside method bodies / lambdas /
+        accessors / constructors. Two failure modes to reject:
+
+          1. Nested-container leakage — a function inside a nested companion /
+             object / inner class. We bail when a class-like ancestor sits between
+             method_node and class_node.
+          2. Local-function leakage — a function declared inside another function's
+             body. Local declarations are not class methods; we bail when a
+             function-like ancestor sits between method_node and class_node.
 
         Compare by tree-sitter node `id` because the Python bindings wrap each
         `.parent` lookup in a fresh object — `is` and `==` are not reliable.
@@ -55,6 +74,8 @@ class KotlinHandler(BaseLanguageHandler):
             if current.id == target_id:
                 return True
             if current.type in self._CLASS_LIKE_TYPES:
+                return False
+            if current.type in self._FUNCTION_LIKE_TYPES:
                 return False
             current = current.parent
         return False
