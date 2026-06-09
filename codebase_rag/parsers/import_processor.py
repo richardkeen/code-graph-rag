@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from codebase_rag.types_defs import ModuleResolverProtocol
 
     from .js_ts.tsconfig_resolver import TsConfigResolver
+    from .kotlin.package_index import KotlinPackageIndex
     from .workspace.protocol import WorkspaceResolver
 
 
@@ -56,7 +57,7 @@ class ImportProcessor:
         # Lazily-built map of `<package>.<simple_name>` → canonical
         # file-path-rooted QN for Kotlin. Built on first Kotlin import
         # resolution; non-Kotlin repos pay nothing.
-        self._kotlin_package_index: dict[str, tuple[str, str]] | None = None
+        self._kotlin_package_index: KotlinPackageIndex | None = None
 
         load_persistent_cache()
 
@@ -328,7 +329,7 @@ class ImportProcessor:
 
         return qualified_name
 
-    def _get_kotlin_package_index(self) -> dict[str, tuple[str, str]]:
+    def _get_kotlin_package_index(self) -> KotlinPackageIndex:
         if self._kotlin_package_index is None:
             from .kotlin.package_index import build_kotlin_package_index
 
@@ -348,7 +349,7 @@ class ImportProcessor:
         Returns ``None`` for genuinely external imports
         (``kotlin.collections.List`` etc.).
         """
-        return self._get_kotlin_package_index().get(full_name)
+        return self._get_kotlin_package_index().by_name.get(full_name)
 
     def _resolve_module_path(
         self,
@@ -362,6 +363,9 @@ class ImportProcessor:
                 if full_name.startswith(project_prefix):
                     return full_name
             case cs.SupportedLanguage.KOTLIN:
+                index = self._get_kotlin_package_index()
+                if full_name in index.module_qns:
+                    return full_name
                 if resolved := self._resolve_kotlin_import(full_name):
                     return resolved[1]
             case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
@@ -843,10 +847,19 @@ class ImportProcessor:
             if not parsed:
                 continue
             if parsed.is_wildcard:
-                # Wildcard module-level resolution is handled at lookup time
-                # by the call resolver's prefix walk; store the raw package
-                # path so that mechanism still works.
-                self.import_mapping[module_qn][f"*{parsed.path}"] = parsed.path
+                index = self._get_kotlin_package_index()
+                internal_modules = [
+                    mod_qn
+                    for mod_qn in index.modules_by_package.get(parsed.path, [])
+                    if mod_qn != module_qn
+                ]
+                if internal_modules:
+                    for mod_qn in internal_modules:
+                        self.import_mapping[module_qn][
+                            f"*{parsed.path}@{mod_qn}"
+                        ] = mod_qn
+                else:
+                    self.import_mapping[module_qn][f"*{parsed.path}"] = parsed.path
                 continue
             local_name = parsed.alias or parsed.path.rsplit(cs.SEPARATOR_DOT, 1)[-1]
             # Prefer the canonical file-path-rooted Class QN when the package

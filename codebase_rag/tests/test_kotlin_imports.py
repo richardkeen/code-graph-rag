@@ -323,3 +323,125 @@ def test_kotlin_kts_file_indexed(
         f"Expected IMPORTS edge from {app_module_qn} to {build_module_qn}; "
         f"got targets {app_imports_targets}"
     )
+
+
+@pytest.fixture
+def kotlin_internal_wildcard_project(temp_repo: Path) -> Path:
+    """Two files declare `package a.b`; a third `import a.b.*` and uses both.
+
+    The wildcard branch must expand to one IMPORTS entry per real internal
+    Module so the wildcard call resolver lands on canonical Function/Class
+    QNs, not on the raw package path that produces a synthetic external
+    `Module('a.b')`.
+    """
+    project_path = temp_repo / "kotlin_internal_wildcard"
+    project_path.mkdir()
+    (project_path / "Foo.kt").write_text(
+        encoding="utf-8",
+        data="""
+package a.b
+
+class Foo
+""",
+    )
+    (project_path / "Util.kt").write_text(
+        encoding="utf-8",
+        data="""
+package a.b
+
+fun util(): Int = 1
+""",
+    )
+    (project_path / "Consumer.kt").write_text(
+        encoding="utf-8",
+        data="""
+package c.d
+
+import a.b.*
+
+fun bar(): Int {
+    val f = Foo()
+    return util()
+}
+""",
+    )
+    return project_path
+
+
+def test_kotlin_internal_wildcard_import_resolves(
+    kotlin_internal_wildcard_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Regression: `import a.b.*` for an internal Kotlin package must
+    expand into IMPORTS edges to every Module declaring `package a.b`,
+    let the wildcard call resolver find canonical Function QNs, and not
+    create a synthetic external `Module(qualified_name='a.b')`.
+    """
+    from codebase_rag.tests.conftest import create_and_run_updater
+
+    updater = create_and_run_updater(
+        kotlin_internal_wildcard_project,
+        mock_ingestor,
+        skip_if_missing="kotlin",
+    )
+
+    project_name = kotlin_internal_wildcard_project.name
+    consumer_module_qn = f"{project_name}.Consumer"
+    foo_module_qn = f"{project_name}.Foo"
+    util_module_qn = f"{project_name}.Util"
+    util_function_qn = f"{project_name}.Util.util"
+
+    mappings = updater.factory.import_processor.import_mapping.get(
+        consumer_module_qn, {}
+    )
+    assert mappings.get(f"*a.b@{foo_module_qn}") == foo_module_qn, mappings
+    assert mappings.get(f"*a.b@{util_module_qn}") == util_module_qn, mappings
+
+    imports_edges = [
+        c
+        for c in mock_ingestor.ensure_relationship_batch.call_args_list
+        if len(c.args) >= 3 and c.args[1] == "IMPORTS"
+    ]
+    consumer_imports_targets = {
+        c.args[2][2]
+        for c in imports_edges
+        if c.args[0][2] == consumer_module_qn
+    }
+    assert foo_module_qn in consumer_imports_targets, (
+        f"Expected IMPORTS edge from {consumer_module_qn} to "
+        f"{foo_module_qn}; got {consumer_imports_targets}"
+    )
+    assert util_module_qn in consumer_imports_targets, (
+        f"Expected IMPORTS edge from {consumer_module_qn} to "
+        f"{util_module_qn}; got {consumer_imports_targets}"
+    )
+
+    external_modules = [
+        c
+        for c in mock_ingestor.ensure_node_batch.call_args_list
+        if c.args[0] == "Module" and c.args[1].get("is_external") is True
+    ]
+    bad_external = [
+        c.args[1]
+        for c in external_modules
+        if c.args[1].get("qualified_name") == "a.b"
+    ]
+    assert not bad_external, (
+        f"Internal Kotlin package 'a.b' must not be ingested as an "
+        f"external Module; got {bad_external}"
+    )
+
+    calls_edges = [
+        c
+        for c in mock_ingestor.ensure_relationship_batch.call_args_list
+        if len(c.args) >= 3 and c.args[1] == "CALLS"
+    ]
+    bar_call_targets = {
+        c.args[2][2]
+        for c in calls_edges
+        if isinstance(c.args[0][2], str) and c.args[0][2].endswith(".bar")
+    }
+    assert util_function_qn in bar_call_targets, (
+        f"Expected CALLS edge from bar() to {util_function_qn} via the "
+        f"wildcard import; got {bar_call_targets}"
+    )

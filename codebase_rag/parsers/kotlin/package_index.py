@@ -1,28 +1,35 @@
-"""Build a Kotlin name → (canonical_qn, module_qn) index.
+"""Bridge Kotlin package-form names and file-path-rooted Module/Class QNs.
 
-Kotlin imports are written in package form (`import a.b.Foo`) but
-Modules / Classes / top-level functions are ingested with file-path-rooted
-qualified names (`<project>.<relative_file_path>.<symbol>`). Without a
-bridge between the two namespaces, `import a.b.Foo` flows through the
-external-module path in `ImportProcessor._resolve_module_path` and
-produces a synthetic `Module` node — even though `Foo.kt` already exists
-in the graph.
+Kotlin imports are written in package form (`import a.b.Foo`,
+`import a.b.*`) but Modules / Classes / top-level functions are ingested
+with file-path-rooted qualified names (`<project>.<relative_file_path>.<symbol>`).
+Without a bridge, package-form references flow through the external-module
+path in `ImportProcessor._resolve_module_path` and produce synthetic
+`Module` nodes even when the real ones exist in the graph.
 
-This helper walks every `.kt` and `.kts` file in the repo, parses each
-with tree-sitter-kotlin, reads its `package` declaration, and records
-each top-level declaration under two keys — the package-form name a
-Kotlin import statement uses, and the canonical file-path-rooted QN the
-ingestion pipeline produces. Both map to the same
-`(canonical_qn, module_qn)` tuple, so callers can resolve in either
-direction without re-deriving the Module QN by string arithmetic
-(which is wrong for top-level extension functions whose canonical QN
-carries a receiver prefix — `<module>.<receiver>.<name>`).
+This module walks every `.kt` and `.kts` file in the repo, parses each
+with tree-sitter-kotlin, and returns three coupled views built from the
+same scan:
+
+  - `by_name`: keyed by both `<package>.<simple_name>` and the canonical
+    QN, valued as `(canonical_qn, module_qn)`. Lets callers resolve in
+    either direction without re-deriving the Module QN by string
+    arithmetic (which is wrong for top-level extension functions whose
+    canonical QN carries a receiver prefix — `<module>.<receiver>.<name>`).
+  - `modules_by_package`: `package → list[module_qn]`. Backs `import a.b.*`
+    expansion: every internal Module declaring `package a.b` becomes a
+    separate import entry / IMPORTS edge target.
+  - `module_qns`: `set[str]` of every internal Kotlin Module QN. Lets
+    `_resolve_module_path` short-circuit before the generic stdlib
+    fallback strips the trailing uppercase segment of `<project>.Util`
+    and emits a synthetic external `Module('<project>')`.
 """
 
 from __future__ import annotations
 
 import importlib
 from pathlib import Path
+from typing import NamedTuple
 
 from tree_sitter import Language, Parser
 
@@ -31,13 +38,22 @@ from ...utils.path_utils import should_skip_path
 from . import utils as kotlin_utils
 
 
+class KotlinPackageIndex(NamedTuple):
+    by_name: dict[str, tuple[str, str]]
+    modules_by_package: dict[str, list[str]]
+    module_qns: set[str]
+
+
 def build_kotlin_package_index(
     repo_path: Path, project_name: str
-) -> dict[str, tuple[str, str]]:
+) -> KotlinPackageIndex:
     parser = _make_kotlin_parser()
     if parser is None:
-        return {}
-    index: dict[str, tuple[str, str]] = {}
+        return KotlinPackageIndex(by_name={}, modules_by_package={}, module_qns=set())
+    by_name: dict[str, tuple[str, str]] = {}
+    modules_by_package: dict[str, list[str]] = {}
+    seen_module_per_package: dict[str, set[str]] = {}
+    module_qns: set[str] = set()
     for ext in cs.KOTLIN_EXTENSIONS:
         for file_path in repo_path.rglob(f"*{ext}"):
             if should_skip_path(file_path, repo_path):
@@ -52,14 +68,23 @@ def build_kotlin_package_index(
             module_qn = _file_to_module_qn(file_path, repo_path, project_name)
             if module_qn is None:
                 continue
+            module_qns.add(module_qn)
+            seen = seen_module_per_package.setdefault(package, set())
+            if module_qn not in seen:
+                modules_by_package.setdefault(package, []).append(module_qn)
+                seen.add(module_qn)
             for simple_name, qn_segment in _iter_top_level_named_decls(
                 tree.root_node
             ):
                 canonical_qn = f"{module_qn}{cs.SEPARATOR_DOT}{qn_segment}"
                 entry = (canonical_qn, module_qn)
-                index[f"{package}{cs.SEPARATOR_DOT}{simple_name}"] = entry
-                index[canonical_qn] = entry
-    return index
+                by_name[f"{package}{cs.SEPARATOR_DOT}{simple_name}"] = entry
+                by_name[canonical_qn] = entry
+    return KotlinPackageIndex(
+        by_name=by_name,
+        modules_by_package=modules_by_package,
+        module_qns=module_qns,
+    )
 
 
 def _make_kotlin_parser() -> Parser | None:
