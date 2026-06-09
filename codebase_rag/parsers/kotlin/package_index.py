@@ -33,23 +33,24 @@ def build_kotlin_package_index(
     if parser is None:
         return {}
     index: dict[str, str] = {}
-    for file_path in repo_path.rglob(f"*{cs.EXT_KT}"):
-        if should_skip_path(file_path, repo_path):
-            continue
-        try:
-            tree = parser.parse(file_path.read_bytes())
-        except Exception:
-            continue
-        package = kotlin_utils.extract_package_name(tree.root_node)
-        if package is None:
-            continue
-        module_qn = _file_to_module_qn(file_path, repo_path, project_name)
-        if module_qn is None:
-            continue
-        for name in _iter_top_level_named_decls(tree.root_node):
-            index[f"{package}{cs.SEPARATOR_DOT}{name}"] = (
-                f"{module_qn}{cs.SEPARATOR_DOT}{name}"
-            )
+    for ext in cs.KOTLIN_EXTENSIONS:
+        for file_path in repo_path.rglob(f"*{ext}"):
+            if should_skip_path(file_path, repo_path):
+                continue
+            try:
+                tree = parser.parse(file_path.read_bytes())
+            except Exception:
+                continue
+            package = kotlin_utils.extract_package_name(tree.root_node)
+            if package is None:
+                continue
+            module_qn = _file_to_module_qn(file_path, repo_path, project_name)
+            if module_qn is None:
+                continue
+            for name in _iter_top_level_named_decls(tree.root_node):
+                index[f"{package}{cs.SEPARATOR_DOT}{name}"] = (
+                    f"{module_qn}{cs.SEPARATOR_DOT}{name}"
+                )
     return index
 
 

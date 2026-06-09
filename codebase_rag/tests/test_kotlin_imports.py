@@ -166,3 +166,76 @@ def test_kotlin_cross_file_import_resolves_to_internal_module(
         f"Internal Kotlin package 'a.b' must not be ingested as an external "
         f"Module; got {bad_external}"
     )
+
+
+@pytest.fixture
+def kotlin_kts_import_project(temp_repo: Path) -> Path:
+    """A `.kts` script declares a class that a `.kt` file imports. The Kotlin
+    package index must scan both extensions; otherwise the `.kts`
+    declaration is invisible and the import resolves to a synthetic
+    external Module.
+    """
+    project_path = temp_repo / "kotlin_kts_imports"
+    project_path.mkdir()
+    (project_path / "Build.kts").write_text(
+        encoding="utf-8",
+        data="""
+package a.b
+
+class Foo
+""",
+    )
+    (project_path / "App.kt").write_text(
+        encoding="utf-8",
+        data="""
+package c.d
+
+import a.b.Foo
+
+class App : Foo()
+""",
+    )
+    return project_path
+
+
+def test_kotlin_kts_file_indexed(
+    kotlin_kts_import_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Regression: the Kotlin package index must walk `.kts` script files,
+    not only `.kt`. parser_loader advertises both extensions; the bridge
+    has to keep up.
+    """
+    from codebase_rag.tests.conftest import create_and_run_updater
+
+    updater = create_and_run_updater(
+        kotlin_kts_import_project, mock_ingestor, skip_if_missing="kotlin"
+    )
+
+    project_name = kotlin_kts_import_project.name
+    app_module_qn = f"{project_name}.App"
+    build_module_qn = f"{project_name}.Build"
+    foo_class_qn = f"{project_name}.Build.Foo"
+
+    mappings = updater.factory.import_processor.import_mapping.get(
+        app_module_qn, {}
+    )
+    assert mappings.get("Foo") == foo_class_qn, (
+        f"Expected import_mapping['{app_module_qn}']['Foo'] == "
+        f"'{foo_class_qn}'; got {mappings}"
+    )
+
+    imports_edges = [
+        c
+        for c in mock_ingestor.ensure_relationship_batch.call_args_list
+        if len(c.args) >= 3 and c.args[1] == "IMPORTS"
+    ]
+    app_imports_targets = {
+        c.args[2][2]
+        for c in imports_edges
+        if c.args[0][2] == app_module_qn
+    }
+    assert build_module_qn in app_imports_targets, (
+        f"Expected IMPORTS edge from {app_module_qn} to {build_module_qn}; "
+        f"got targets {app_imports_targets}"
+    )
