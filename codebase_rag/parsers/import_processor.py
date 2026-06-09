@@ -56,7 +56,7 @@ class ImportProcessor:
         # Lazily-built map of `<package>.<simple_name>` → canonical
         # file-path-rooted QN for Kotlin. Built on first Kotlin import
         # resolution; non-Kotlin repos pay nothing.
-        self._kotlin_package_index: dict[str, str] | None = None
+        self._kotlin_package_index: dict[str, tuple[str, str]] | None = None
 
         load_persistent_cache()
 
@@ -328,7 +328,7 @@ class ImportProcessor:
 
         return qualified_name
 
-    def _get_kotlin_package_index(self) -> dict[str, str]:
+    def _get_kotlin_package_index(self) -> dict[str, tuple[str, str]]:
         if self._kotlin_package_index is None:
             from .kotlin.package_index import build_kotlin_package_index
 
@@ -338,22 +338,17 @@ class ImportProcessor:
         return self._kotlin_package_index
 
     def _resolve_kotlin_import(self, full_name: str) -> tuple[str, str] | None:
-        """Bridge a Kotlin package-form import to canonical file-path-rooted QNs.
+        """Bridge a Kotlin package-form import to (canonical_qn, module_qn).
 
-        Returns ``(class_qn, module_qn)`` for an import like ``a.b.Foo`` when an
-        internal Kotlin file declares ``package a.b`` and a top-level ``Foo``;
-        ``class_qn`` matches a `function_registry` key (so call resolution
-        finds the imported symbol), and ``module_qn`` is the parent Module QN
-        the IMPORTS edge should land on. Returns ``None`` for genuinely
-        external imports (``kotlin.collections.List`` etc.).
+        Returns the registry-rooted canonical QN (matching a `function_registry`
+        key so Pass 3 call resolution finds the imported symbol) together with
+        the parent Module QN the IMPORTS edge should target. Both are recorded
+        at index-build time, including the receiver prefix for top-level
+        extension functions whose canonical QN form is `<module>.<receiver>.<name>`.
+        Returns ``None`` for genuinely external imports
+        (``kotlin.collections.List`` etc.).
         """
-        class_qn = self._get_kotlin_package_index().get(full_name)
-        if class_qn is None:
-            return None
-        parts = class_qn.rsplit(cs.SEPARATOR_DOT, 1)
-        if len(parts) != 2:
-            return None
-        return class_qn, parts[0]
+        return self._get_kotlin_package_index().get(full_name)
 
     def _resolve_module_path(
         self,

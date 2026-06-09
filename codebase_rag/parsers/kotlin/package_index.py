@@ -1,17 +1,22 @@
-"""Build a `<package>.<simple_name>` → canonical-QN index for Kotlin.
+"""Build a Kotlin name → (canonical_qn, module_qn) index.
 
-Kotlin imports are written in package form (`import a.b.Foo`) but Kotlin
-Modules and Classes are ingested with file-path-rooted qualified names
-(`<project>.<relative_file_path>.Foo`). Without a bridge between the two
-namespaces, `import a.b.Foo` flows through the external-module path in
-`ImportProcessor._resolve_module_path` and produces a synthetic `Module`
-node — even though `Foo.kt` already exists in the graph.
+Kotlin imports are written in package form (`import a.b.Foo`) but
+Modules / Classes / top-level functions are ingested with file-path-rooted
+qualified names (`<project>.<relative_file_path>.<symbol>`). Without a
+bridge between the two namespaces, `import a.b.Foo` flows through the
+external-module path in `ImportProcessor._resolve_module_path` and
+produces a synthetic `Module` node — even though `Foo.kt` already exists
+in the graph.
 
-This helper walks every `.kt` file in the repo, parses each with
-tree-sitter-kotlin, reads its `package` declaration, and pulls each
-top-level declaration's name. The resulting map lets `_resolve_module_path`
-turn `a.b.Foo` into the actual ingested `<project>.<file>.Foo` qualified
-name.
+This helper walks every `.kt` and `.kts` file in the repo, parses each
+with tree-sitter-kotlin, reads its `package` declaration, and records
+each top-level declaration under two keys — the package-form name a
+Kotlin import statement uses, and the canonical file-path-rooted QN the
+ingestion pipeline produces. Both map to the same
+`(canonical_qn, module_qn)` tuple, so callers can resolve in either
+direction without re-deriving the Module QN by string arithmetic
+(which is wrong for top-level extension functions whose canonical QN
+carries a receiver prefix — `<module>.<receiver>.<name>`).
 """
 
 from __future__ import annotations
@@ -28,11 +33,11 @@ from . import utils as kotlin_utils
 
 def build_kotlin_package_index(
     repo_path: Path, project_name: str
-) -> dict[str, str]:
+) -> dict[str, tuple[str, str]]:
     parser = _make_kotlin_parser()
     if parser is None:
         return {}
-    index: dict[str, str] = {}
+    index: dict[str, tuple[str, str]] = {}
     for ext in cs.KOTLIN_EXTENSIONS:
         for file_path in repo_path.rglob(f"*{ext}"):
             if should_skip_path(file_path, repo_path):
@@ -47,10 +52,13 @@ def build_kotlin_package_index(
             module_qn = _file_to_module_qn(file_path, repo_path, project_name)
             if module_qn is None:
                 continue
-            for name in _iter_top_level_named_decls(tree.root_node):
-                index[f"{package}{cs.SEPARATOR_DOT}{name}"] = (
-                    f"{module_qn}{cs.SEPARATOR_DOT}{name}"
-                )
+            for simple_name, qn_segment in _iter_top_level_named_decls(
+                tree.root_node
+            ):
+                canonical_qn = f"{module_qn}{cs.SEPARATOR_DOT}{qn_segment}"
+                entry = (canonical_qn, module_qn)
+                index[f"{package}{cs.SEPARATOR_DOT}{simple_name}"] = entry
+                index[canonical_qn] = entry
     return index
 
 
@@ -76,13 +84,20 @@ _TOP_LEVEL_NAMED_DECL_TYPES = frozenset(
 )
 
 
-def _iter_top_level_named_decls(root_node) -> list[str]:
-    names: list[str] = []
+def _iter_top_level_named_decls(root_node) -> list[tuple[str, str]]:
+    """Yield (simple_name, qn_segment) for each top-level declaration.
+
+    `simple_name` is what appears in a Kotlin import statement
+    (`import pkg.<simple_name>`); `qn_segment` is the trailing part of the
+    canonical QN that ingestion produces. The two diverge for top-level
+    extension functions: `fun String.shout()` is imported as `shout` but
+    ingested under `<module>.String.shout`, so its `qn_segment` carries
+    the receiver prefix.
+    """
+    entries: list[tuple[str, str]] = []
     for child in root_node.children:
         if child.type not in _TOP_LEVEL_NAMED_DECL_TYPES:
             continue
-        # type_alias uses the `type:` field for its declared name; everything
-        # else uses `name:`.
         field = (
             cs.TS_FIELD_TYPE
             if child.type == cs.TS_KOTLIN_TYPE_ALIAS
@@ -91,8 +106,14 @@ def _iter_top_level_named_decls(root_node) -> list[str]:
         name_node = child.child_by_field_name(field)
         if name_node is None or name_node.text is None:
             continue
-        names.append(name_node.text.decode(cs.ENCODING_UTF8))
-    return names
+        simple_name = name_node.text.decode(cs.ENCODING_UTF8)
+        qn_segment = simple_name
+        if child.type == cs.TS_KOTLIN_FUNCTION_DECLARATION:
+            receiver = kotlin_utils.extract_receiver_type(child)
+            if receiver:
+                qn_segment = f"{receiver}{cs.SEPARATOR_DOT}{simple_name}"
+        entries.append((simple_name, qn_segment))
+    return entries
 
 
 def _file_to_module_qn(

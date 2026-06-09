@@ -260,7 +260,7 @@ def _extract_function_name(fn_node: ASTNode) -> str | None:
     return None
 
 
-def _extract_receiver_type(fn_node: ASTNode) -> str | None:
+def extract_receiver_type(fn_node: ASTNode) -> str | None:
     """For `fun String.shout()` return "String".
 
     tree-sitter-kotlin emits the receiver as a `user_type` positional child
@@ -286,7 +286,7 @@ def extract_function_info(fn_node: ASTNode) -> KotlinFunctionInfo:
     return KotlinFunctionInfo(
         name=_extract_function_name(fn_node),
         parameters=_extract_parameters(fn_node),
-        receiver_type=_extract_receiver_type(fn_node),
+        receiver_type=extract_receiver_type(fn_node),
         modifiers=extract_modifiers(fn_node),
         annotations=extract_annotations(fn_node),
     )

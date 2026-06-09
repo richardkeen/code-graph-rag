@@ -169,6 +169,90 @@ def test_kotlin_cross_file_import_resolves_to_internal_module(
 
 
 @pytest.fixture
+def kotlin_cross_file_function_import_project(temp_repo: Path) -> Path:
+    """One file declares a top-level function; another imports and calls it.
+
+    Without recording the parent Module QN in the package index,
+    `_resolve_module_path` falls through to the project-prefixed canonical
+    Function QN (`<project>.Util.util`), which targets a non-existent Module
+    node — the actual Module is `<project>.Util`.
+    """
+    project_path = temp_repo / "kotlin_xfile_funcs"
+    project_path.mkdir()
+    (project_path / "Util.kt").write_text(
+        encoding="utf-8",
+        data="""
+package a.b
+
+fun util(): Int = 1
+""",
+    )
+    (project_path / "App.kt").write_text(
+        encoding="utf-8",
+        data="""
+package c.d
+
+import a.b.util
+
+fun caller() {
+    util()
+}
+""",
+    )
+    return project_path
+
+
+def test_kotlin_cross_file_top_level_function_import_resolves(
+    kotlin_cross_file_function_import_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Regression: importing a top-level `fun util()` must produce an IMPORTS
+    edge targeting the Module (`<project>.Util`), not the canonical Function
+    QN (`<project>.Util.util`) the importer was previously left holding when
+    `_resolve_module_path` failed to derive the Module QN.
+    """
+    from codebase_rag.tests.conftest import create_and_run_updater
+
+    updater = create_and_run_updater(
+        kotlin_cross_file_function_import_project,
+        mock_ingestor,
+        skip_if_missing="kotlin",
+    )
+
+    project_name = kotlin_cross_file_function_import_project.name
+    app_module_qn = f"{project_name}.App"
+    util_module_qn = f"{project_name}.Util"
+    util_function_qn = f"{project_name}.Util.util"
+
+    mappings = updater.factory.import_processor.import_mapping.get(
+        app_module_qn, {}
+    )
+    assert mappings.get("util") == util_function_qn, (
+        f"Expected import_mapping['{app_module_qn}']['util'] == "
+        f"'{util_function_qn}'; got {mappings}"
+    )
+
+    imports_edges = [
+        c
+        for c in mock_ingestor.ensure_relationship_batch.call_args_list
+        if len(c.args) >= 3 and c.args[1] == "IMPORTS"
+    ]
+    app_imports_targets = {
+        c.args[2][2]
+        for c in imports_edges
+        if c.args[0][2] == app_module_qn
+    }
+    assert util_module_qn in app_imports_targets, (
+        f"Expected IMPORTS edge from {app_module_qn} to Module "
+        f"{util_module_qn}; got targets {app_imports_targets}"
+    )
+    assert util_function_qn not in app_imports_targets, (
+        f"IMPORTS edge must target the Module, not the canonical Function "
+        f"QN {util_function_qn}; got {app_imports_targets}"
+    )
+
+
+@pytest.fixture
 def kotlin_kts_import_project(temp_repo: Path) -> Path:
     """A `.kts` script declares a class that a `.kt` file imports. The Kotlin
     package index must scan both extensions; otherwise the `.kts`
