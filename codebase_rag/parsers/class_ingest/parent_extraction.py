@@ -195,10 +195,23 @@ def extract_kotlin_supertypes(
 
 
 def _kotlin_user_type_name(user_type_node: Node) -> str | None:
-    for child in user_type_node.children:
-        if child.type == cs.TS_KOTLIN_IDENTIFIER and child.text:
-            return safe_decode_text(child)
-    return None
+    """Reconstruct the qualified Kotlin type name from a `user_type` node.
+
+    Kotlin parents like `class C : foo.bar.Base()` or `class C : Outer.Inner()`
+    are represented as a `user_type` node containing several `identifier`
+    children separated by literal `.` tokens. Returning only the first
+    identifier loses the qualifier (`foo` for `foo.bar.Base`, `Outer` for
+    `Outer.Inner`) and breaks INHERITS/IMPLEMENTS resolution. Walk every
+    identifier child and rejoin them so the full dotted name flows through
+    to `_resolve_kotlin_parent`'s simple-name fallback.
+    """
+    parts = [
+        text
+        for child in user_type_node.children
+        if child.type == cs.TS_KOTLIN_IDENTIFIER
+        and (text := safe_decode_text(child))
+    ]
+    return cs.SEPARATOR_DOT.join(parts) if parts else None
 
 
 def extract_python_superclasses(

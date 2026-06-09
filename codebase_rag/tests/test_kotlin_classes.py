@@ -114,3 +114,71 @@ typealias UserMap = Map<String, String>
     assert not any(name.endswith(".String") for name in classes), (
         f"RHS 'String' should not be ingested as an alias node; got {classes}"
     )
+
+
+@pytest.fixture
+def kotlin_qualified_supertype_project(temp_repo: Path) -> Path:
+    """Two Kotlin files in different packages where the child class names its
+    parent with a fully qualified type (`foo.bar.Base`) instead of relying on
+    an `import`. tree-sitter-kotlin emits the parent as a `user_type` node
+    holding multiple `identifier` children; the supertype walker must
+    reconstruct the full dotted name so `_resolve_kotlin_parent`'s simple-name
+    fallback can still locate Base in the registry.
+    """
+    project_path = temp_repo / "kotlin_qualified_supertype"
+    project_path.mkdir()
+    (project_path / "Base.kt").write_text(
+        encoding="utf-8",
+        data="""
+package foo.bar
+
+open class Base
+""",
+    )
+    (project_path / "App.kt").write_text(
+        encoding="utf-8",
+        data="""
+package c.d
+
+class C : foo.bar.Base()
+""",
+    )
+    return project_path
+
+
+def test_kotlin_qualified_supertype_resolves(
+    kotlin_qualified_supertype_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Regression: `class C : foo.bar.Base()` must produce an INHERITS edge to
+    the canonical Base Class QN, not to a truncated `foo` (the prior bug
+    where _kotlin_user_type_name returned only the first identifier child).
+    """
+    create_and_run_updater(
+        kotlin_qualified_supertype_project,
+        mock_ingestor,
+        skip_if_missing="kotlin",
+    )
+
+    project_name = kotlin_qualified_supertype_project.name
+    base_class_qn = f"{project_name}.Base.Base"
+    child_class_qn = f"{project_name}.App.C"
+
+    inherits_edges = get_relationships(mock_ingestor, "INHERITS")
+    inherits_targets_for_c = {
+        edge.args[2][2]
+        for edge in inherits_edges
+        if edge.args[0][2] == child_class_qn
+    }
+
+    assert base_class_qn in inherits_targets_for_c, (
+        f"Expected INHERITS edge from {child_class_qn} to {base_class_qn}; "
+        f"got {inherits_targets_for_c}"
+    )
+    assert not any(
+        target.endswith(".foo") or target == "foo"
+        for target in inherits_targets_for_c
+    ), (
+        f"INHERITS target must not be the truncated first identifier 'foo'; "
+        f"got {inherits_targets_for_c}"
+    )
