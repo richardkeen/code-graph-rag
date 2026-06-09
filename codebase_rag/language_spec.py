@@ -102,7 +102,9 @@ def _kotlin_get_name(node: Node) -> str | None:
     if node.type == cs.TS_KOTLIN_COMPANION_OBJECT:
         return _generic_get_name(node) or cs.KOTLIN_COMPANION_DEFAULT_NAME
     if node.type == cs.TS_KOTLIN_FUNCTION_DECLARATION:
-        receiver_name = _kotlin_extension_receiver_name(node)
+        from .parsers.kotlin.utils import extract_receiver_type
+
+        receiver_name = extract_receiver_type(node)
         fn_name = _generic_get_name(node)
         if not fn_name:
             return None
@@ -117,33 +119,6 @@ def _kotlin_get_name(node: Node) -> str | None:
     ):
         return "<init>"
     return _generic_get_name(node)
-
-
-def _kotlin_extension_receiver_name(fn_node: Node) -> str | None:
-    """For `fun String.shout()` return "String" — else None.
-
-    tree-sitter-kotlin represents the receiver as a `user_type` positional
-    child appearing *before* the `name` field's `identifier` child, with a
-    literal `.` between them. We accept the receiver only when it precedes
-    the name node (otherwise it's a return-type `user_type`).
-    """
-    name_node = fn_node.child_by_field_name(cs.TS_FIELD_NAME)
-    if not name_node:
-        return None
-    saw_name = False
-    receiver: Node | None = None
-    for child in fn_node.children:
-        if child.id == name_node.id:
-            saw_name = True
-            break
-        if child.type == cs.TS_KOTLIN_USER_TYPE:
-            receiver = child
-    if not saw_name or receiver is None:
-        return None
-    for child in receiver.children:
-        if child.type == cs.TS_KOTLIN_IDENTIFIER and child.text:
-            return child.text.decode(cs.ENCODING_UTF8)
-    return None
 
 
 def _rust_get_name(node: Node) -> str | None:

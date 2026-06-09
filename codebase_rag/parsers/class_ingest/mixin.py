@@ -297,9 +297,11 @@ class ClassIngestMixin:
         below sees the resolved QNs automatically.
         """
         from ..handlers import iter_handlers
+        from ..handlers.base import BaseLanguageHandler
 
         for handler in iter_handlers():
-            handler.finalize_post_passes(self)
+            if type(handler).finalize_post_passes is not BaseLanguageHandler.finalize_post_passes:
+                handler.finalize_post_passes(self)
         mo.process_all_method_overrides(
             self.function_registry,
             self.class_inheritance,

@@ -603,7 +603,7 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
     ),
     SupportedLanguage.KOTLIN: LanguageMetadata(
         LanguageStatus.DEV,
-        "Companion objects, extension functions, data/sealed/value classes, primary/secondary constructors. See [Kotlin terminology mapping](docs/kotlin-terminology.md)",
+        "Companion objects, extension functions, data/sealed/value classes, primary/secondary constructors",
         "Kotlin",
     ),
 }
