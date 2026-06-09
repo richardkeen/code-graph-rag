@@ -36,7 +36,7 @@ def determine_node_type(
         ):
             logger.info(logs.CLASS_FOUND_INTERFACE.format(name=class_name, qn=class_qn))
             return NodeType.INTERFACE
-        case cs.TS_TYPE_ALIAS_DECLARATION:
+        case cs.TS_TYPE_ALIAS_DECLARATION | cs.TS_KOTLIN_TYPE_ALIAS:
             logger.info(logs.CLASS_FOUND_TYPE.format(name=class_name, qn=class_qn))
             return NodeType.TYPE
         case cs.TS_STRUCT_SPECIFIER:

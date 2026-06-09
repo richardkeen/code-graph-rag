@@ -103,16 +103,19 @@ typealias UserMap = Map<String, String>
     )
     create_and_run_updater(project, mock_ingestor, skip_if_missing="kotlin")
 
+    types = get_node_names(mock_ingestor, NodeType.TYPE)
+    assert any(name.endswith("UserId") for name in types), (
+        f"UserId typealias should be ingested as a Type; got {types}"
+    )
+    assert any(name.endswith("UserMap") for name in types), (
+        f"UserMap typealias should be ingested as a Type; got {types}"
+    )
     classes = get_node_names(mock_ingestor, NodeType.CLASS)
-    assert any(name.endswith("UserId") for name in classes), (
-        f"UserId typealias should be ingested as a Class; got {classes}"
-    )
-    assert any(name.endswith("UserMap") for name in classes), (
-        f"UserMap typealias should be ingested as a Class; got {classes}"
-    )
-    # Must NOT capture the RHS identifier instead of the alias name.
     assert not any(name.endswith(".String") for name in classes), (
         f"RHS 'String' should not be ingested as an alias node; got {classes}"
+    )
+    assert not any(name.endswith("UserId") for name in classes), (
+        f"UserId typealias must not also be ingested as a Class; got {classes}"
     )
 
 
