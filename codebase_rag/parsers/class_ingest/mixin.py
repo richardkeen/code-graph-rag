@@ -16,7 +16,6 @@ from ..rs import utils as rs_utils
 from ..utils import ingest_method, safe_decode_text
 from . import cpp_modules
 from . import identity as id_
-from . import kotlin_inheritance as ki
 from . import method_override as mo
 from . import node_type as nt
 from . import relationships as rel
@@ -287,17 +286,23 @@ class ClassIngestMixin:
             self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
 
     def process_all_method_overrides(self) -> None:
+        """Run every language's deferred post-pass, then walk overrides.
+
+        Most handlers' `finalize_post_passes` is a no-op; KotlinHandler
+        resolves `pending_inheritance` parents to canonical registry-rooted
+        QNs and emits INHERITS / IMPLEMENTS edges. Because the parent_qns
+        list is shared by reference between `pending_inheritance` and
+        `class_inheritance` (set up in
+        `relationships.create_class_relationships`), the override walker
+        below sees the resolved QNs automatically.
+        """
+        from ..handlers import iter_handlers
+
+        for handler in iter_handlers():
+            handler.finalize_post_passes(self)
         mo.process_all_method_overrides(
             self.function_registry,
             self.class_inheritance,
-            self.ingestor,
-        )
-
-    def process_pending_inheritance(self) -> None:
-        ki.process_all_kotlin_inheritance_edges(
-            self.function_registry,
-            self.pending_inheritance,
-            self.simple_name_lookup,
             self.ingestor,
         )
 

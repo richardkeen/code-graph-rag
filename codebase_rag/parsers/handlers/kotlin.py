@@ -8,6 +8,7 @@ from .base import BaseLanguageHandler
 
 if TYPE_CHECKING:
     from ...types_defs import ASTNode
+    from ..class_ingest.mixin import ClassIngestMixin
 
 
 class KotlinHandler(BaseLanguageHandler):
@@ -48,9 +49,7 @@ class KotlinHandler(BaseLanguageHandler):
         # captures are filtered by `is_direct_class_member` below.
         return class_node
 
-    def is_direct_class_member(
-        self, method_node: ASTNode, class_node: ASTNode
-    ) -> bool:
+    def is_direct_class_member(self, method_node: ASTNode, class_node: ASTNode) -> bool:
         """Return True iff the nearest class-like ancestor of method_node is class_node.
 
         The Kotlin function query is unanchored, so when running it against an outer
@@ -99,3 +98,24 @@ class KotlinHandler(BaseLanguageHandler):
             param_sig = cs.SEPARATOR_COMMA_SPACE.join(info.parameters)
             return f"{base}({param_sig})"
         return base
+
+    def finalize_post_passes(self, processor: ClassIngestMixin) -> None:
+        """Resolve Kotlin parent QNs and emit INHERITS / IMPLEMENTS edges.
+
+        Kotlin's `delegation_specifiers` grammar fuses class inheritance
+        with interface implementation, so the edge type cannot be decided
+        while parsing each file. This deferred pass runs once Pass 2 has
+        registered every parent's NodeType, rewrites parent QNs in
+        `pending_inheritance` to their canonical registry-rooted form
+        (visible to the override walker via the shared list reference set
+        up in `relationships.create_class_relationships`), and emits the
+        resolved edges.
+        """
+        from ..class_ingest import kotlin_inheritance as ki
+
+        ki.process_all_kotlin_inheritance_edges(
+            processor.function_registry,
+            processor.pending_inheritance,
+            processor.simple_name_lookup,
+            processor.ingestor,
+        )

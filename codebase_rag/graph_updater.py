@@ -319,7 +319,6 @@ class GraphUpdater:
             self._process_function_calls()
             self._log_call_processing_summary()
 
-            self.factory.definition_processor.process_pending_inheritance()
             self.factory.definition_processor.process_all_method_overrides()
 
             logger.info(ls.ANALYSIS_COMPLETE)

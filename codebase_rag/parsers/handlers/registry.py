@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from functools import lru_cache
 
 from ...constants import SupportedLanguage
@@ -35,3 +36,15 @@ _DEFAULT_HANDLER = BaseLanguageHandler
 def get_handler(language: SupportedLanguage) -> LanguageHandler:
     handler_class = _HANDLERS.get(language, _DEFAULT_HANDLER)
     return handler_class()
+
+
+def iter_handlers() -> Iterator[LanguageHandler]:
+    """Yield each registered language handler exactly once.
+
+    Used by post-pass orchestration that needs to fan out to every
+    language's deferred resolution hooks (e.g. Kotlin's INHERITS /
+    IMPLEMENTS resolver) without the orchestrator branching on the
+    language token.
+    """
+    for language in _HANDLERS:
+        yield get_handler(language)

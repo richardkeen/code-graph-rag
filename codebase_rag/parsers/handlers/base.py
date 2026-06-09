@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
     from ...language_spec import LanguageSpec
     from ...types_defs import ASTNode
+    from ..class_ingest.mixin import ClassIngestMixin
 
 
 class BaseLanguageHandler:
@@ -70,9 +71,7 @@ class BaseLanguageHandler:
         """
         return class_node.child_by_field_name(cs.TS_FIELD_BODY)
 
-    def is_direct_class_member(
-        self, method_node: ASTNode, class_node: ASTNode
-    ) -> bool:
+    def is_direct_class_member(self, method_node: ASTNode, class_node: ASTNode) -> bool:
         """Default: every captured member belongs to the class being walked.
 
         Override only when `find_class_body` returns a node wide enough to
@@ -92,6 +91,9 @@ class BaseLanguageHandler:
             name_node := method_node.child_by_field_name(cs.FIELD_NAME)
         ) and name_node.text:
             return safe_decode_text(name_node)
+        return None
+
+    def finalize_post_passes(self, processor: ClassIngestMixin) -> None:
         return None
 
     def build_nested_function_qn(

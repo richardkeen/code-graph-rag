@@ -7,6 +7,7 @@ if TYPE_CHECKING:
 
     from ...language_spec import LanguageSpec
     from ...types_defs import ASTNode
+    from ..class_ingest.mixin import ClassIngestMixin
 
 
 class LanguageHandler(Protocol):
@@ -66,9 +67,7 @@ class LanguageHandler(Protocol):
         """
         ...
 
-    def is_direct_class_member(
-        self, method_node: ASTNode, class_node: ASTNode
-    ) -> bool:
+    def is_direct_class_member(self, method_node: ASTNode, class_node: ASTNode) -> bool:
         """Return True if `method_node`'s nearest class-like ancestor is `class_node`.
 
         Languages that widen `find_class_body` beyond the strict body need
@@ -81,3 +80,16 @@ class LanguageHandler(Protocol):
         ...
 
     def extract_method_name(self, method_node: ASTNode) -> str | None: ...
+
+    def finalize_post_passes(self, processor: ClassIngestMixin) -> None:
+        """Run any language-specific deferred resolution after Pass 2/3.
+
+        Called once per registered handler before
+        `process_all_method_overrides` walks `class_inheritance`. Default is
+        a no-op; languages whose grammar requires post-parse disambiguation
+        (e.g. Kotlin's INHERITS vs IMPLEMENTS decision, which depends on
+        every parent's NodeType being stable in the function registry)
+        implement this to mutate `processor.pending_inheritance` and emit
+        the corresponding edges.
+        """
+        ...
