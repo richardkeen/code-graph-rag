@@ -138,3 +138,82 @@ def test_kotlin_cross_file_extension_function_import_resolves(
         f"IMPORTS edge must target the Module, not the receiver-qualified "
         f"prefix; got {app_imports_targets}"
     )
+
+
+@pytest.fixture
+def kotlin_wildcard_extension_project(temp_repo: Path) -> Path:
+    """One file declares a top-level extension; another wildcard-imports the
+    package and calls the extension. The wildcard call resolver only probes
+    `<imported_qn>.<call_name>`, so the package index has to surface
+    `<module>.<receiver>` prefixes for extension functions or `import
+    strings.*; "x".shout()` silently drops the CALLS edge.
+    """
+    project_path = temp_repo / "kotlin_wildcard_ext"
+    project_path.mkdir()
+    (project_path / "Strings.kt").write_text(
+        encoding="utf-8",
+        data="""
+package strings
+
+fun String.shout(): String = this.uppercase()
+""",
+    )
+    (project_path / "App.kt").write_text(
+        encoding="utf-8",
+        data="""
+package app
+
+import strings.*
+
+fun main() {
+    "hi".shout()
+}
+""",
+    )
+    return project_path
+
+
+def test_kotlin_wildcard_extension_resolves(
+    kotlin_wildcard_extension_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Regression: `import strings.*` followed by `"hi".shout()` must
+    resolve to the canonical extension QN `<project>.Strings.String.shout`
+    via the wildcard probe. Requires the package index to expose the
+    extension's `<module>.<receiver>` prefix per package so the wildcard
+    expansion in `_parse_kotlin_imports` can store an `import_mapping`
+    entry the resolver lands on.
+    """
+    updater = create_and_run_updater(
+        kotlin_wildcard_extension_project,
+        mock_ingestor,
+        skip_if_missing="kotlin",
+    )
+
+    project_name = kotlin_wildcard_extension_project.name
+    app_module_qn = f"{project_name}.App"
+    receiver_prefix = f"{project_name}.Strings.String"
+    shout_canonical_qn = f"{project_name}.Strings.String.shout"
+
+    mappings = updater.factory.import_processor.import_mapping.get(
+        app_module_qn, {}
+    )
+    assert mappings.get(f"*strings@{receiver_prefix}") == receiver_prefix, (
+        f"Expected wildcard prefix entry "
+        f"'*strings@{receiver_prefix}' -> '{receiver_prefix}'; got {mappings}"
+    )
+
+    calls_edges = [
+        c
+        for c in mock_ingestor.ensure_relationship_batch.call_args_list
+        if len(c.args) >= 3 and c.args[1] == "CALLS"
+    ]
+    main_call_targets = {
+        c.args[2][2]
+        for c in calls_edges
+        if isinstance(c.args[0][2], str) and c.args[0][2].endswith(".main")
+    }
+    assert shout_canonical_qn in main_call_targets, (
+        f"Expected CALLS edge from main() to {shout_canonical_qn} via the "
+        f"wildcard import; got {main_call_targets}"
+    )

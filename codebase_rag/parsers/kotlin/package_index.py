@@ -43,6 +43,7 @@ class KotlinPackageIndex(NamedTuple):
     by_name: dict[str, tuple[str, str]]
     modules_by_package: dict[str, list[str]]
     module_qns: set[str]
+    extension_prefixes_by_package: dict[str, set[str]]
 
 
 def build_kotlin_package_index(
@@ -50,11 +51,17 @@ def build_kotlin_package_index(
 ) -> KotlinPackageIndex:
     parser = _make_kotlin_parser()
     if parser is None:
-        return KotlinPackageIndex(by_name={}, modules_by_package={}, module_qns=set())
+        return KotlinPackageIndex(
+            by_name={},
+            modules_by_package={},
+            module_qns=set(),
+            extension_prefixes_by_package={},
+        )
     by_name: dict[str, tuple[str, str]] = {}
     modules_by_package: dict[str, list[str]] = {}
     seen_module_per_package: dict[str, set[str]] = {}
     module_qns: set[str] = set()
+    extension_prefixes_by_package: dict[str, set[str]] = {}
     for ext in cs.KOTLIN_EXTENSIONS:
         for file_path in repo_path.rglob(f"*{ext}"):
             if should_skip_path(file_path, repo_path):
@@ -79,10 +86,18 @@ def build_kotlin_package_index(
                 entry = (canonical_qn, module_qn)
                 by_name[f"{package}{cs.SEPARATOR_DOT}{import_path}"] = entry
                 by_name[canonical_qn] = entry
+                if qn_segment != import_path:
+                    receiver_prefix = canonical_qn.rsplit(
+                        cs.SEPARATOR_DOT, 1
+                    )[0]
+                    extension_prefixes_by_package.setdefault(
+                        package, set()
+                    ).add(receiver_prefix)
     return KotlinPackageIndex(
         by_name=by_name,
         modules_by_package=modules_by_package,
         module_qns=module_qns,
+        extension_prefixes_by_package=extension_prefixes_by_package,
     )
 
 

@@ -853,11 +853,24 @@ class ImportProcessor:
                     for mod_qn in index.modules_by_package.get(parsed.path, [])
                     if mod_qn != module_qn
                 ]
-                if internal_modules:
+                extension_prefixes = [
+                    prefix
+                    for prefix in index.extension_prefixes_by_package.get(
+                        parsed.path, ()
+                    )
+                    if not prefix.startswith(
+                        f"{module_qn}{cs.SEPARATOR_DOT}"
+                    )
+                ]
+                if internal_modules or extension_prefixes:
                     for mod_qn in internal_modules:
                         self.import_mapping[module_qn][
                             f"*{parsed.path}@{mod_qn}"
                         ] = mod_qn
+                    for prefix in extension_prefixes:
+                        self.import_mapping[module_qn][
+                            f"*{parsed.path}@{prefix}"
+                        ] = prefix
                 else:
                     self.import_mapping[module_qn][f"*{parsed.path}"] = parsed.path
                 continue
