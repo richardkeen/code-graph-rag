@@ -28,6 +28,7 @@ same scan:
 from __future__ import annotations
 
 import importlib
+from collections.abc import Iterator
 from pathlib import Path
 from typing import NamedTuple
 
@@ -73,12 +74,10 @@ def build_kotlin_package_index(
             if module_qn not in seen:
                 modules_by_package.setdefault(package, []).append(module_qn)
                 seen.add(module_qn)
-            for simple_name, qn_segment in _iter_top_level_named_decls(
-                tree.root_node
-            ):
+            for import_path, qn_segment in _iter_named_decls(tree.root_node):
                 canonical_qn = f"{module_qn}{cs.SEPARATOR_DOT}{qn_segment}"
                 entry = (canonical_qn, module_qn)
-                by_name[f"{package}{cs.SEPARATOR_DOT}{simple_name}"] = entry
+                by_name[f"{package}{cs.SEPARATOR_DOT}{import_path}"] = entry
                 by_name[canonical_qn] = entry
     return KotlinPackageIndex(
         by_name=by_name,
@@ -99,7 +98,7 @@ def _make_kotlin_parser() -> Parser | None:
     return Parser(language)
 
 
-_TOP_LEVEL_NAMED_DECL_TYPES = frozenset(
+_NAMED_DECL_TYPES = frozenset(
     {
         cs.TS_KOTLIN_CLASS_DECLARATION,
         cs.TS_KOTLIN_OBJECT_DECLARATION,
@@ -107,21 +106,34 @@ _TOP_LEVEL_NAMED_DECL_TYPES = frozenset(
         cs.TS_KOTLIN_TYPE_ALIAS,
     }
 )
+_CONTAINER_DECL_TYPES = frozenset(
+    {
+        cs.TS_KOTLIN_CLASS_DECLARATION,
+        cs.TS_KOTLIN_OBJECT_DECLARATION,
+    }
+)
 
 
-def _iter_top_level_named_decls(root_node) -> list[tuple[str, str]]:
-    """Yield (simple_name, qn_segment) for each top-level declaration.
+def _iter_named_decls(
+    parent_node, segment_prefix: str = ""
+) -> Iterator[tuple[str, str]]:
+    """Yield (import_path, qn_segment) for every named declaration.
 
-    `simple_name` is what appears in a Kotlin import statement
-    (`import pkg.<simple_name>`); `qn_segment` is the trailing part of the
-    canonical QN that ingestion produces. The two diverge for top-level
-    extension functions: `fun String.shout()` is imported as `shout` but
-    ingested under `<module>.String.shout`, so its `qn_segment` carries
-    the receiver prefix.
+    Walks `parent_node.children` and descends into class/object bodies so
+    nested declarations like `class Outer { class Inner }` produce both
+    an `Outer` entry and an `Outer.Inner` entry — matching how Kotlin
+    imports name them (`import pkg.Outer.Inner`) and how ingestion builds
+    the canonical QN (`<module>.Outer.Inner`).
+
+    `import_path` is the dotted form a Kotlin import statement uses
+    (`Outer.Inner`); `qn_segment` is the trailing part of the canonical
+    QN that ingestion produces. The two diverge for top-level extension
+    functions whose canonical QN carries a receiver prefix
+    (`String.shout`); member functions inside class bodies are skipped
+    because they aren't standalone-importable.
     """
-    entries: list[tuple[str, str]] = []
-    for child in root_node.children:
-        if child.type not in _TOP_LEVEL_NAMED_DECL_TYPES:
+    for child in parent_node.children:
+        if child.type not in _NAMED_DECL_TYPES:
             continue
         field = (
             cs.TS_FIELD_TYPE
@@ -132,13 +144,25 @@ def _iter_top_level_named_decls(root_node) -> list[tuple[str, str]]:
         if name_node is None or name_node.text is None:
             continue
         simple_name = name_node.text.decode(cs.ENCODING_UTF8)
-        qn_segment = simple_name
         if child.type == cs.TS_KOTLIN_FUNCTION_DECLARATION:
+            if segment_prefix:
+                continue
             receiver = kotlin_utils.extract_receiver_type(child)
-            if receiver:
-                qn_segment = f"{receiver}{cs.SEPARATOR_DOT}{simple_name}"
-        entries.append((simple_name, qn_segment))
-    return entries
+            qn_segment = (
+                f"{receiver}{cs.SEPARATOR_DOT}{simple_name}"
+                if receiver
+                else simple_name
+            )
+            yield simple_name, qn_segment
+            continue
+        nested_path = f"{segment_prefix}{simple_name}"
+        yield nested_path, nested_path
+        if child.type in _CONTAINER_DECL_TYPES:
+            body = kotlin_utils.find_class_body(child)
+            if body is not None:
+                yield from _iter_named_decls(
+                    body, f"{nested_path}{cs.SEPARATOR_DOT}"
+                )
 
 
 def _file_to_module_qn(

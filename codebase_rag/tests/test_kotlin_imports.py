@@ -445,3 +445,97 @@ def test_kotlin_internal_wildcard_import_resolves(
         f"Expected CALLS edge from bar() to {util_function_qn} via the "
         f"wildcard import; got {bar_call_targets}"
     )
+
+
+@pytest.fixture
+def kotlin_nested_class_import_project(temp_repo: Path) -> Path:
+    """One file declares `class Outer { class Inner }`; another file imports
+    the nested class directly via `import pkg.Outer.Inner`. The Kotlin
+    package index must walk into class bodies so nested declarations are
+    findable; otherwise the import falls through to a synthetic external
+    Module even though `Inner` is fully ingested at canonical QN
+    `<project>.Container.Outer.Inner`.
+    """
+    project_path = temp_repo / "kotlin_nested_import"
+    project_path.mkdir()
+    (project_path / "Container.kt").write_text(
+        encoding="utf-8",
+        data="""
+package nested
+
+open class Outer {
+    open class Inner
+}
+""",
+    )
+    (project_path / "App.kt").write_text(
+        encoding="utf-8",
+        data="""
+package c.d
+
+import nested.Outer.Inner
+
+class Use : Inner()
+""",
+    )
+    return project_path
+
+
+def test_kotlin_nested_class_import_resolves(
+    kotlin_nested_class_import_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Regression: `import nested.Outer.Inner` must resolve to the canonical
+    nested-class QN, not to a synthetic external Module created because
+    the package index didn't recurse into class bodies.
+    """
+    from codebase_rag.tests.conftest import create_and_run_updater
+
+    updater = create_and_run_updater(
+        kotlin_nested_class_import_project,
+        mock_ingestor,
+        skip_if_missing="kotlin",
+    )
+
+    project_name = kotlin_nested_class_import_project.name
+    app_module_qn = f"{project_name}.App"
+    container_module_qn = f"{project_name}.Container"
+    inner_class_qn = f"{project_name}.Container.Outer.Inner"
+
+    mappings = updater.factory.import_processor.import_mapping.get(
+        app_module_qn, {}
+    )
+    assert mappings.get("Inner") == inner_class_qn, (
+        f"Expected import_mapping['{app_module_qn}']['Inner'] == "
+        f"'{inner_class_qn}'; got {mappings}"
+    )
+
+    imports_edges = [
+        c
+        for c in mock_ingestor.ensure_relationship_batch.call_args_list
+        if len(c.args) >= 3 and c.args[1] == "IMPORTS"
+    ]
+    app_imports_targets = {
+        c.args[2][2]
+        for c in imports_edges
+        if c.args[0][2] == app_module_qn
+    }
+    assert container_module_qn in app_imports_targets, (
+        f"Expected IMPORTS edge from {app_module_qn} to "
+        f"{container_module_qn}; got {app_imports_targets}"
+    )
+
+    external_modules = [
+        c
+        for c in mock_ingestor.ensure_node_batch.call_args_list
+        if c.args[0] == "Module" and c.args[1].get("is_external") is True
+    ]
+    bad_external = [
+        c.args[1]
+        for c in external_modules
+        if c.args[1].get("qualified_name") in {"nested", "nested.Outer"}
+    ]
+    assert not bad_external, (
+        f"Internal Kotlin nested package must not be ingested as an "
+        f"external Module; got {bad_external}"
+    )
