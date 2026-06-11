@@ -136,10 +136,13 @@ def is_kotlin_interface(class_node: ASTNode) -> bool:
 
 
 def _user_type_name(user_type_node: ASTNode) -> str | None:
-    for child in user_type_node.children:
-        if child.type == cs.TS_KOTLIN_IDENTIFIER and (text := safe_decode_text(child)):
-            return text
-    return None
+    parts = [
+        text
+        for child in user_type_node.children
+        if child.type == cs.TS_KOTLIN_IDENTIFIER
+        and (text := safe_decode_text(child))
+    ]
+    return cs.SEPARATOR_DOT.join(parts) if parts else None
 
 
 def extract_annotations(node: ASTNode) -> list[str]:

@@ -13,6 +13,13 @@ if TYPE_CHECKING:
     from ...types_defs import FunctionRegistryTrieProtocol, SimpleNameLookup
 
 
+def _common_prefix_len(qn: str, prefix: str) -> int:
+    """Count the number of leading dot-separated segments shared by qn and prefix."""
+    qn_parts = qn.split(SEPARATOR_DOT)
+    prefix_parts = prefix.split(SEPARATOR_DOT)
+    return sum(1 for a, b in zip(qn_parts, prefix_parts) if a == b)
+
+
 def _resolve_kotlin_parent(
     parent_qn: str,
     function_registry: FunctionRegistryTrieProtocol,
@@ -30,7 +37,13 @@ def _resolve_kotlin_parent(
     Resolution order:
     1. Direct hit in function_registry — use as-is.
     2. Simple-name fallback via simple_name_lookup — prefer Interface
-       candidates, then fall back to any Class candidate.
+       candidates over Class candidates, and among same-type candidates
+       prefer the one whose canonical QN shares the longest common path
+       prefix with parent_qn. The prefix heuristic resolves the common
+       case where the parent is in the same package: the fallback QN is
+       `<child_module>.<simple_name>`, so a sibling file in the same
+       directory shares more prefix segments than a class in an unrelated
+       package. Alphabetical order is used as a stable tiebreaker.
     3. Return original QN unchanged (edge will likely be dropped by Memgraph,
        but we cannot do better without a full import-map re-routing pass).
     """
@@ -40,15 +53,52 @@ def _resolve_kotlin_parent(
 
     simple_name = parent_qn.rsplit(SEPARATOR_DOT, 1)[-1]
     candidates = simple_name_lookup.get(simple_name, set())
+    if not candidates:
+        return NodeType.CLASS, parent_qn
+
+    parent_module_prefix = parent_qn.rsplit(SEPARATOR_DOT, 1)[0]
+
+    best_interface_qn: str | None = None
+    best_interface_prefix_len = -1
     best_class_qn: str | None = None
+    best_class_prefix_len = -1
+
     for candidate_qn in sorted(candidates):
         candidate_type = function_registry.get(candidate_qn, None)
+        prefix_len = _common_prefix_len(candidate_qn, parent_module_prefix)
         if candidate_type == NodeType.INTERFACE:
-            return NodeType.INTERFACE, candidate_qn
-        if candidate_type == NodeType.CLASS and best_class_qn is None:
-            best_class_qn = candidate_qn
+            if prefix_len > best_interface_prefix_len:
+                best_interface_prefix_len = prefix_len
+                best_interface_qn = candidate_qn
+        elif candidate_type == NodeType.CLASS:
+            if prefix_len > best_class_prefix_len:
+                best_class_prefix_len = prefix_len
+                best_class_qn = candidate_qn
+
+    if best_interface_qn is not None:
+        iface_candidates = [c for c in sorted(candidates) if function_registry.get(c) == NodeType.INTERFACE]
+        if len(iface_candidates) > 1 and best_interface_prefix_len == 0:
+            logger.debug(
+                "Ambiguous Kotlin parent '%s': multiple Interface candidates %s; "
+                "picked '%s' by alphabetical fallback",
+                parent_qn,
+                iface_candidates,
+                best_interface_qn,
+            )
+        return NodeType.INTERFACE, best_interface_qn
+
     if best_class_qn is not None:
+        class_candidates = [c for c in sorted(candidates) if function_registry.get(c) == NodeType.CLASS]
+        if len(class_candidates) > 1 and best_class_prefix_len == 0:
+            logger.debug(
+                "Ambiguous Kotlin parent '%s': multiple Class candidates %s; "
+                "picked '%s' by alphabetical fallback",
+                parent_qn,
+                class_candidates,
+                best_class_qn,
+            )
         return NodeType.CLASS, best_class_qn
+
     return NodeType.CLASS, parent_qn
 
 

@@ -217,3 +217,50 @@ def test_kotlin_wildcard_extension_resolves(
         f"Expected CALLS edge from main() to {shout_canonical_qn} via the "
         f"wildcard import; got {main_call_targets}"
     )
+
+
+def test_kotlin_qualified_receiver_type_unit() -> None:
+    """Regression: `fun Map.Entry<K, V>.foo()` must produce receiver 'Map.Entry'.
+
+    `_user_type_name` previously returned only the first identifier of a
+    `user_type` node, so `Map.Entry` was truncated to `Map`. The fix walks
+    all identifier children and rejoins them with dots.
+    """
+    from codebase_rag.parser_loader import load_parsers
+
+    parsers, queries = load_parsers()
+    if "kotlin" not in parsers:
+        pytest.skip("kotlin parser not available")
+    parser = queries["kotlin"]["parser"]
+    src = b"fun Map.Entry<K, V>.describe(): String = toString()"
+    tree = parser.parse(src)
+    fn_node = next(
+        c for c in tree.root_node.children if c.type == "function_declaration"
+    )
+    receiver = kotlin_utils.extract_receiver_type(fn_node)
+    assert receiver == "Map.Entry", f"Expected 'Map.Entry', got {receiver!r}"
+
+
+def test_kotlin_qualified_receiver_qn_includes_full_receiver(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Regression: extension `fun Map.Entry<K, V>.display()` must be ingested
+    with QN `<module>.Map.Entry.display`, not `<module>.Map.display`.
+    """
+    project_path = temp_repo / "kotlin_qualified_ext"
+    project_path.mkdir()
+    (project_path / "Entries.kt").write_text(
+        encoding="utf-8",
+        data="""
+package entries
+
+fun Map.Entry<String, Int>.display(): String = "${'$'}key=${'$'}value"
+""",
+    )
+    create_and_run_updater(project_path, mock_ingestor, skip_if_missing="kotlin")
+
+    functions = get_node_names(mock_ingestor, NodeType.FUNCTION)
+    assert any(name.endswith(".Map.Entry.display") for name in functions), (
+        f"Expected a function QN ending '.Map.Entry.display'; got: {functions}"
+    )

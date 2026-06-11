@@ -306,3 +306,74 @@ def test_kotlin_cross_file_override_emits_overrides_edge(
         "Expected ClientImpl.greet -[OVERRIDES]-> Greeter.greet across files; "
         f"all OVERRIDES edges: {[(c.args[0][2], c.args[2][2]) for c in overrides]}"
     )
+
+
+def test_resolve_kotlin_parent_prefers_closer_package() -> None:
+    """Regression: when multiple classes share the same simple name, the
+    longest-common-prefix heuristic must prefer the candidate in the closest
+    package to the child rather than picking alphabetically.
+
+    Scenario: `project.pkg_b.Consumer` inherits `Result` without an explicit
+    import (same-package, no import needed). At parse time the registry is
+    empty so `_resolve_to_qn` falls back to `project.pkg_b.Consumer.Result`.
+    The deferred pass then has two candidates:
+      - `project.pkg_a.WrongResult.Result`  (different package — alphabetically first)
+      - `project.pkg_b.CorrectResult.Result` (same package — higher prefix overlap)
+
+    Without the prefix heuristic, sorted() picks the wrong candidate.
+    """
+    from codebase_rag.parsers.class_ingest.kotlin_inheritance import (
+        _resolve_kotlin_parent,
+    )
+
+    parent_qn = "project.pkg_b.Consumer.Result"
+    function_registry: dict = {
+        "project.pkg_a.WrongResult.Result": NodeType.CLASS,
+        "project.pkg_b.CorrectResult.Result": NodeType.CLASS,
+    }
+    simple_name_lookup: dict = {
+        "Result": {
+            "project.pkg_a.WrongResult.Result",
+            "project.pkg_b.CorrectResult.Result",
+        }
+    }
+
+    node_type, resolved_qn = _resolve_kotlin_parent(
+        parent_qn, function_registry, simple_name_lookup
+    )
+
+    assert resolved_qn == "project.pkg_b.CorrectResult.Result", (
+        f"Prefix heuristic should have preferred the same-package candidate; "
+        f"got {resolved_qn!r}"
+    )
+    assert node_type == NodeType.CLASS
+
+
+def test_resolve_kotlin_parent_prefers_interface_over_class() -> None:
+    """Interface candidates take priority over Class candidates even when the
+    Interface has a shorter prefix overlap.
+    """
+    from codebase_rag.parsers.class_ingest.kotlin_inheritance import (
+        _resolve_kotlin_parent,
+    )
+
+    parent_qn = "project.pkg_a.Consumer.Callback"
+    function_registry: dict = {
+        "project.pkg_a.NearCallback.Callback": NodeType.CLASS,
+        "project.pkg_b.FarCallback.Callback": NodeType.INTERFACE,
+    }
+    simple_name_lookup: dict = {
+        "Callback": {
+            "project.pkg_a.NearCallback.Callback",
+            "project.pkg_b.FarCallback.Callback",
+        }
+    }
+
+    node_type, resolved_qn = _resolve_kotlin_parent(
+        parent_qn, function_registry, simple_name_lookup
+    )
+
+    assert node_type == NodeType.INTERFACE, (
+        f"Interface candidate should win over Class regardless of prefix; got {node_type}"
+    )
+    assert resolved_qn == "project.pkg_b.FarCallback.Callback"
