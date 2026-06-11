@@ -56,7 +56,7 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 | CSS | In Development | .css | - | - | ✓ | - | Selectors, rules, @-rules |
 | Go | In Development | .go | ✓ | ✓ | ✓ | - | Methods, type declarations |
 | HTML | In Development | .html, .htm | - | - | ✓ | - | Elements, attributes, IDs, classes |
-| Kotlin | In Development | .kt, .kts | ✓ | ✓ | ✓ | ✓ | Companion objects, extension functions, data/sealed/value classes, primary/secondary constructors. See [Kotlin terminology mapping](docs/kotlin-terminology.md) |
+| Kotlin | In Development | .kt, .kts | ✓ | ✓ | ✓ | ✓ | Companion objects, extension functions, data/sealed/value classes, primary/secondary constructors. |
 | PHP | In Development | .php | ✓ | ✓ | ✓ | - | Classes, functions, namespaces |
 | Scala | In Development | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects |
 | SCSS | In Development | .scss, .sass | - | - | ✓ | - | Variables, mixins, nested rules, @use/@import |

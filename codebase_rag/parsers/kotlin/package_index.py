@@ -62,37 +62,38 @@ def build_kotlin_package_index(
     seen_module_per_package: dict[str, set[str]] = {}
     module_qns: set[str] = set()
     extension_prefixes_by_package: dict[str, set[str]] = {}
-    for ext in cs.KOTLIN_EXTENSIONS:
-        for file_path in repo_path.rglob(f"*{ext}"):
-            if should_skip_path(file_path, repo_path):
-                continue
-            try:
-                tree = parser.parse(file_path.read_bytes())
-            except Exception:
-                continue
-            package = kotlin_utils.extract_package_name(tree.root_node)
-            if package is None:
-                continue
-            module_qn = _file_to_module_qn(file_path, repo_path, project_name)
-            if module_qn is None:
-                continue
-            module_qns.add(module_qn)
-            seen = seen_module_per_package.setdefault(package, set())
-            if module_qn not in seen:
-                modules_by_package.setdefault(package, []).append(module_qn)
-                seen.add(module_qn)
-            for import_path, qn_segment in _iter_named_decls(tree.root_node):
-                canonical_qn = f"{module_qn}{cs.SEPARATOR_DOT}{qn_segment}"
-                entry = (canonical_qn, module_qn)
-                by_name[f"{package}{cs.SEPARATOR_DOT}{import_path}"] = entry
-                by_name[canonical_qn] = entry
-                if qn_segment != import_path:
-                    receiver_prefix = canonical_qn.rsplit(
-                        cs.SEPARATOR_DOT, 1
-                    )[0]
-                    extension_prefixes_by_package.setdefault(
-                        package, set()
-                    ).add(receiver_prefix)
+    kotlin_extensions = set(cs.KOTLIN_EXTENSIONS)
+    for file_path in repo_path.rglob("*"):
+        if file_path.suffix not in kotlin_extensions:
+            continue
+        if should_skip_path(file_path, repo_path):
+            continue
+        try:
+            tree = parser.parse(file_path.read_bytes())
+        except Exception:
+            continue
+        package = kotlin_utils.extract_package_name(tree.root_node)
+        if package is None:
+            continue
+        module_qn = _file_to_module_qn(file_path, repo_path, project_name)
+        if module_qn is None:
+            continue
+        module_qns.add(module_qn)
+        seen = seen_module_per_package.setdefault(package, set())
+        if module_qn not in seen:
+            modules_by_package.setdefault(package, []).append(module_qn)
+            seen.add(module_qn)
+        for import_path, qn_segment in _iter_named_decls(tree.root_node):
+            canonical_qn = f"{module_qn}{cs.SEPARATOR_DOT}{qn_segment}"
+            entry = (canonical_qn, module_qn)
+            by_name[f"{package}{cs.SEPARATOR_DOT}{import_path}"] = entry
+            by_name[canonical_qn] = entry
+            if qn_segment != import_path:
+                receiver_prefix = canonical_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+                extension_prefixes_by_package.setdefault(
+                    package, set()
+                ).add(receiver_prefix)
+                by_name[receiver_prefix] = (receiver_prefix, module_qn)
     return KotlinPackageIndex(
         by_name=by_name,
         modules_by_package=modules_by_package,
