@@ -93,6 +93,18 @@ class BaseLanguageHandler:
             return safe_decode_text(name_node)
         return None
 
+    def build_caller_qn(
+        self,
+        class_qn: str,
+        method_name: str,
+        method_node: ASTNode,
+    ) -> str:
+        return f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+
+    @property
+    def calls_fqn_spec(self) -> None:
+        return None
+
     def finalize_post_passes(self, processor: ClassIngestMixin) -> None:
         return None
 

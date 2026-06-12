@@ -9,7 +9,7 @@ from tree_sitter import Node, QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
-from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
+from ..language_spec import LanguageSpec
 from ..models import CallProcessingMetrics
 from ..services import IngestorProtocol
 from ..utils.fqn_resolver import resolve_fqn_from_ast
@@ -584,27 +584,11 @@ class CallProcessor:
                     continue
 
                 method_qn: str | None = None
-                if language == cs.SupportedLanguage.JAVA:
-                    # Java's caller_qn format must match mixin's inline
-                    # ingestion format (commas without spaces, EMPTY_PARENS
-                    # for zero-args). JavaHandler.build_method_qualified_name
-                    # uses a different format and is intentionally untouched.
-                    from .java import utils as java_utils
-
-                    method_info = java_utils.extract_method_info(method_node)
-                    if method_name := method_info.get(cs.KEY_NAME):
-                        parameters = method_info.get(cs.KEY_PARAMETERS, [])
-                        param_sig = (
-                            f"({','.join(parameters)})"
-                            if parameters
-                            else cs.EMPTY_PARENS
-                        )
-                        method_qn = f"{class_qn}.{method_name}{param_sig}"
-                elif method_name := (
+                if method_name := (
                     handler.extract_method_name(method_node)
                     or self._get_node_name(method_node)
                 ):
-                    method_qn = handler.build_method_qualified_name(
+                    method_qn = handler.build_caller_qn(
                         class_qn, method_name, method_node
                     )
 
@@ -654,7 +638,7 @@ class CallProcessor:
         # canonical FQN the same way mixin ingests them, so caller method QNs
         # built downstream match the ingested Method node QNs (e.g.
         # `module.Outer.Companion.create`, not `module.Companion.create`).
-        fqn_config = LANGUAGE_FQN_SPECS.get(language)
+        fqn_config = handler.calls_fqn_spec
 
         for class_node in class_nodes:
             if not isinstance(class_node, Node):

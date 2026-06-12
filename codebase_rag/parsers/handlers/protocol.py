@@ -81,6 +81,16 @@ class LanguageHandler(Protocol):
 
     def extract_method_name(self, method_node: ASTNode) -> str | None: ...
 
+    def build_caller_qn(
+        self,
+        class_qn: str,
+        method_name: str,
+        method_node: ASTNode,
+    ) -> str: ...
+
+    @property
+    def calls_fqn_spec(self) -> object: ...
+
     def finalize_post_passes(self, processor: ClassIngestMixin) -> None:
         """Run any language-specific deferred resolution after Pass 2/3.
 

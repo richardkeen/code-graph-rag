@@ -99,6 +99,20 @@ class KotlinHandler(BaseLanguageHandler):
             return f"{base}({param_sig})"
         return base
 
+    def build_caller_qn(
+        self,
+        class_qn: str,
+        method_name: str,
+        method_node: ASTNode,
+    ) -> str:
+        return self.build_method_qualified_name(class_qn, method_name, method_node)
+
+    @property
+    def calls_fqn_spec(self) -> object:
+        from ...language_spec import KOTLIN_FQN_SPEC
+
+        return KOTLIN_FQN_SPEC
+
     def finalize_post_passes(self, processor: ClassIngestMixin) -> None:
         """Resolve Kotlin parent QNs and emit INHERITS / IMPLEMENTS edges.
 
