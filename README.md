@@ -56,6 +56,7 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 | CSS | In Development | .css | - | - | ✓ | - | Selectors, rules, @-rules |
 | Go | In Development | .go | ✓ | ✓ | ✓ | - | Methods, type declarations |
 | HTML | In Development | .html, .htm | - | - | ✓ | - | Elements, attributes, IDs, classes |
+| Kotlin | In Development | .kt, .kts | ✓ | ✓ | ✓ | ✓ | Companion objects, extension functions, data/sealed/value classes, primary/secondary constructors. |
 | PHP | In Development | .php | ✓ | ✓ | ✓ | - | Classes, functions, namespaces |
 | Scala | In Development | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects |
 | SCSS | In Development | .scss, .sass | - | - | ✓ | - | Variables, mixins, nested rules, @use/@import |
@@ -655,6 +656,7 @@ The knowledge graph uses the following node types and relationships:
 - **TypeScript**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
 - **C#**: `anonymous_method_expression`, `class_declaration`, `constructor_declaration`, `destructor_declaration`, `enum_declaration`, `function_pointer_type`, `interface_declaration`, `lambda_expression`, `local_function_statement`, `method_declaration`, `struct_declaration`
 - **Go**: `function_declaration`, `method_declaration`, `type_declaration`
+- **Kotlin**: `anonymous_function`, `class_declaration`, `companion_object`, `function_declaration`, `getter`, `object_declaration`, `primary_constructor`, `secondary_constructor`, `setter`, `type_alias`
 - **PHP**: `anonymous_function`, `arrow_function`, `class_declaration`, `enum_declaration`, `function_definition`, `function_static_declaration`, `interface_declaration`, `trait_declaration`
 - **Scala**: `class_definition`, `function_declaration`, `function_definition`, `object_definition`, `trait_definition`
 <!-- /SECTION:language_mappings -->
@@ -761,6 +763,7 @@ my_build_output
 - **protobuf**
 - **defusedxml**: XML bomb protection for Python stdlib modules
 - **huggingface-hub**: Client library to download and publish models, datasets and other repos on the huggingface.co hub
+- **pathspec**: Utility library for gitignore style pattern matching of file paths.
 <!-- /SECTION:dependencies -->
 
 ## 🤖 Agentic Workflow & Tools

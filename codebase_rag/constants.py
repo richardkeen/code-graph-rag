@@ -91,6 +91,8 @@ EXT_CCM = ".ccm"
 EXT_CS = ".cs"
 EXT_PHP = ".php"
 EXT_LUA = ".lua"
+EXT_KT = ".kt"
+EXT_KTS = ".kts"
 
 PY_EXTENSIONS = (EXT_PY,)
 JS_EXTENSIONS = (EXT_JS, EXT_JSX)
@@ -114,6 +116,7 @@ CPP_EXTENSIONS = (
 CS_EXTENSIONS = (EXT_CS,)
 PHP_EXTENSIONS = (EXT_PHP,)
 LUA_EXTENSIONS = (EXT_LUA,)
+KOTLIN_EXTENSIONS = (EXT_KT, EXT_KTS)
 
 EXT_CSS = ".css"
 EXT_HTML = ".html"
@@ -513,6 +516,7 @@ class SupportedLanguage(StrEnum):
     CSS = "css"
     HTML = "html"
     SCSS = "scss"
+    KOTLIN = "kotlin"
 
 
 class LanguageStatus(StrEnum):
@@ -596,6 +600,11 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         LanguageStatus.DEV,
         "Variables, mixins, nested rules, @use/@import",
         "SCSS",
+    ),
+    SupportedLanguage.KOTLIN: LanguageMetadata(
+        LanguageStatus.DEV,
+        "Companion objects, extension functions, data/sealed/value classes, primary/secondary constructors",
+        "Kotlin",
     ),
 }
 
@@ -807,6 +816,7 @@ class TreeSitterModule(StrEnum):
     LUA = "tree_sitter_lua"
     CSS = "tree_sitter_css"
     HTML = "tree_sitter_html"
+    KOTLIN = "tree_sitter_kotlin"
 
 
 QUERY_FUNCTIONS = "functions"
@@ -2559,6 +2569,108 @@ FQN_JAVA_FUNCTION_TYPES = (
     TS_METHOD_DECLARATION,
     TS_CONSTRUCTOR_DECLARATION,
 )
+
+TS_KOTLIN_SOURCE_FILE = "source_file"
+TS_KOTLIN_PACKAGE_HEADER = "package_header"
+TS_KOTLIN_IMPORT = "import"
+TS_KOTLIN_QUALIFIED_IDENTIFIER = "qualified_identifier"
+TS_KOTLIN_CLASS_DECLARATION = "class_declaration"
+TS_KOTLIN_INTERFACE_KEYWORD = "interface"
+TS_KOTLIN_VARIABLE_DECLARATION = "variable_declaration"
+TS_KOTLIN_OBJECT_DECLARATION = "object_declaration"
+TS_KOTLIN_COMPANION_OBJECT = "companion_object"
+TS_KOTLIN_FUNCTION_DECLARATION = "function_declaration"
+TS_KOTLIN_PRIMARY_CONSTRUCTOR = "primary_constructor"
+TS_KOTLIN_SECONDARY_CONSTRUCTOR = "secondary_constructor"
+TS_KOTLIN_ANONYMOUS_FUNCTION = "anonymous_function"
+TS_KOTLIN_LAMBDA_LITERAL = "lambda_literal"
+TS_KOTLIN_PROPERTY_DECLARATION = "property_declaration"
+TS_KOTLIN_GETTER = "getter"
+TS_KOTLIN_SETTER = "setter"
+TS_KOTLIN_CALL_EXPRESSION = "call_expression"
+TS_KOTLIN_NAVIGATION_EXPRESSION = "navigation_expression"
+TS_KOTLIN_INFIX_EXPRESSION = "infix_expression"
+TS_KOTLIN_TYPE_ALIAS = "type_alias"
+TS_KOTLIN_CLASS_BODY = "class_body"
+TS_KOTLIN_ENUM_CLASS_BODY = "enum_class_body"
+TS_KOTLIN_MODIFIERS = "modifiers"
+TS_KOTLIN_CLASS_MODIFIER = "class_modifier"
+TS_KOTLIN_FUNCTION_MODIFIER = "function_modifier"
+TS_KOTLIN_VISIBILITY_MODIFIER = "visibility_modifier"
+TS_KOTLIN_INHERITANCE_MODIFIER = "inheritance_modifier"
+TS_KOTLIN_MEMBER_MODIFIER = "member_modifier"
+TS_KOTLIN_PARAMETER_MODIFIER = "parameter_modifier"
+TS_KOTLIN_PROPERTY_MODIFIER = "property_modifier"
+TS_KOTLIN_PLATFORM_MODIFIER = "platform_modifier"
+TS_KOTLIN_ANNOTATION = "annotation"
+TS_KOTLIN_USER_TYPE = "user_type"
+TS_KOTLIN_NULLABLE_TYPE = "nullable_type"
+TS_KOTLIN_TYPE = "type"
+TS_KOTLIN_IDENTIFIER = "identifier"
+TS_KOTLIN_FUNCTION_VALUE_PARAMETERS = "function_value_parameters"
+TS_KOTLIN_CLASS_PARAMETER = "class_parameter"
+TS_KOTLIN_CLASS_PARAMETERS = "class_parameters"
+TS_KOTLIN_PARAMETER = "parameter"
+TS_KOTLIN_DELEGATION_SPECIFIER = "delegation_specifier"
+TS_KOTLIN_DELEGATION_SPECIFIERS = "delegation_specifiers"
+TS_KOTLIN_CONSTRUCTOR_INVOCATION = "constructor_invocation"
+TS_KOTLIN_EXPLICIT_DELEGATION = "explicit_delegation"
+TS_KOTLIN_VALUE_ARGUMENTS = "value_arguments"
+TS_KOTLIN_VALUE_ARGUMENT = "value_argument"
+TS_KOTLIN_NUMBER_LITERAL = "number_literal"
+
+KOTLIN_MODIFIER_DATA = "data"
+KOTLIN_MODIFIER_SEALED = "sealed"
+KOTLIN_MODIFIER_VALUE = "value"
+KOTLIN_MODIFIER_OPEN = "open"
+KOTLIN_MODIFIER_ABSTRACT = "abstract"
+KOTLIN_MODIFIER_FINAL = "final"
+KOTLIN_MODIFIER_INNER = "inner"
+KOTLIN_MODIFIER_ENUM = "enum"
+KOTLIN_MODIFIER_ANNOTATION = "annotation"
+KOTLIN_MODIFIER_SUSPEND = "suspend"
+KOTLIN_MODIFIER_INLINE = "inline"
+KOTLIN_MODIFIER_INFIX = "infix"
+KOTLIN_MODIFIER_OPERATOR = "operator"
+KOTLIN_MODIFIER_OVERRIDE = "override"
+KOTLIN_MODIFIER_TAILREC = "tailrec"
+KOTLIN_MODIFIER_EXTERNAL = "external"
+KOTLIN_MODIFIER_LATEINIT = "lateinit"
+KOTLIN_MODIFIER_CONST = "const"
+
+SPEC_KOTLIN_FUNCTION_TYPES = (
+    TS_KOTLIN_FUNCTION_DECLARATION,
+    TS_KOTLIN_PRIMARY_CONSTRUCTOR,
+    TS_KOTLIN_SECONDARY_CONSTRUCTOR,
+    TS_KOTLIN_ANONYMOUS_FUNCTION,
+    TS_KOTLIN_GETTER,
+    TS_KOTLIN_SETTER,
+)
+SPEC_KOTLIN_CLASS_TYPES = (
+    TS_KOTLIN_CLASS_DECLARATION,
+    TS_KOTLIN_OBJECT_DECLARATION,
+    TS_KOTLIN_COMPANION_OBJECT,
+    TS_KOTLIN_TYPE_ALIAS,
+)
+SPEC_KOTLIN_MODULE_TYPES = (TS_KOTLIN_SOURCE_FILE,)
+SPEC_KOTLIN_CALL_TYPES = (
+    TS_KOTLIN_CALL_EXPRESSION,
+    TS_KOTLIN_INFIX_EXPRESSION,
+)
+SPEC_KOTLIN_IMPORT_TYPES = (TS_KOTLIN_IMPORT,)
+
+FQN_KOTLIN_SCOPE_TYPES = (
+    TS_KOTLIN_CLASS_DECLARATION,
+    TS_KOTLIN_OBJECT_DECLARATION,
+    TS_KOTLIN_COMPANION_OBJECT,
+    TS_KOTLIN_SOURCE_FILE,
+)
+FQN_KOTLIN_FUNCTION_TYPES = (
+    TS_KOTLIN_FUNCTION_DECLARATION,
+    TS_KOTLIN_PRIMARY_CONSTRUCTOR,
+    TS_KOTLIN_SECONDARY_CONSTRUCTOR,
+)
+KOTLIN_COMPANION_DEFAULT_NAME = "Companion"
 
 FQN_CPP_SCOPE_TYPES = (
     CppNodeType.CLASS_SPECIFIER,

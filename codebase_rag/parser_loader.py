@@ -167,6 +167,12 @@ def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
             cs.QUERY_LANGUAGE,
             cs.SupportedLanguage.SCSS,
         ),
+        LanguageImport(
+            cs.SupportedLanguage.KOTLIN,
+            cs.TreeSitterModule.KOTLIN,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.KOTLIN,
+        ),
     ]
 
     loaders: dict[cs.SupportedLanguage, LanguageLoader] = {

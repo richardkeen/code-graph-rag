@@ -551,6 +551,15 @@ int main() {{
         return full_qualified_name
 
     def _extract_java_stdlib_path(self, full_qualified_name: str) -> str:
+        cached = _get_cached_stdlib_result(cs.SupportedLanguage.JAVA, full_qualified_name)
+        if cached is not None:
+            return cached
+
+        result = self._compute_java_stdlib_path(full_qualified_name)
+        _cache_stdlib_result(cs.SupportedLanguage.JAVA, full_qualified_name, result)
+        return result
+
+    def _compute_java_stdlib_path(self, full_qualified_name: str) -> str:
         parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
             try:

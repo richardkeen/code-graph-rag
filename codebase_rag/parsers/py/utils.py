@@ -31,8 +31,7 @@ def resolve_class_name(
 
     matches = function_registry.find_ending_with(class_name)
     for match in matches:
-        match_parts = match.split(SEPARATOR_DOT)
-        if class_name in match_parts:
+        if match.rsplit(SEPARATOR_DOT, 1)[-1] == class_name:
             return str(match)
 
     return None

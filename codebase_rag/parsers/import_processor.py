@@ -11,6 +11,7 @@ from .. import logs as ls
 from ..language_spec import LanguageSpec
 from ..services import IngestorProtocol
 from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
+from .kotlin import utils as kotlin_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
 from .stdlib_extractor import (
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from codebase_rag.types_defs import ModuleResolverProtocol
 
     from .js_ts.tsconfig_resolver import TsConfigResolver
+    from .kotlin.package_index import KotlinPackageIndex
     from .workspace.protocol import WorkspaceResolver
 
 
@@ -52,6 +54,10 @@ class ImportProcessor:
             function_registry, repo_path, project_name
         )
         self.tsconfig_resolver: TsConfigResolver | None = None
+        # Lazily-built map of `<package>.<simple_name>` → canonical
+        # file-path-rooted QN for Kotlin. Built on first Kotlin import
+        # resolution; non-Kotlin repos pay nothing.
+        self._kotlin_package_index: KotlinPackageIndex | None = None
 
         load_persistent_cache()
 
@@ -102,6 +108,8 @@ class ImportProcessor:
                     self._parse_dynamic_imports(root_node, module_qn, language, queries)
                 case cs.SupportedLanguage.JAVA:
                     self._parse_java_imports(captures, module_qn)
+                case cs.SupportedLanguage.KOTLIN:
+                    self._parse_kotlin_imports(captures, module_qn)
                 case cs.SupportedLanguage.RUST:
                     self._parse_rust_imports(captures, module_qn)
                 case cs.SupportedLanguage.GO:
@@ -321,6 +329,28 @@ class ImportProcessor:
 
         return qualified_name
 
+    def _get_kotlin_package_index(self) -> KotlinPackageIndex:
+        if self._kotlin_package_index is None:
+            from .kotlin.package_index import build_kotlin_package_index
+
+            self._kotlin_package_index = build_kotlin_package_index(
+                self.repo_path, self.project_name
+            )
+        return self._kotlin_package_index
+
+    def _resolve_kotlin_import(self, full_name: str) -> tuple[str, str] | None:
+        """Bridge a Kotlin package-form import to (canonical_qn, module_qn).
+
+        Returns the registry-rooted canonical QN (matching a `function_registry`
+        key so Pass 3 call resolution finds the imported symbol) together with
+        the parent Module QN the IMPORTS edge should target. Both are recorded
+        at index-build time, including the receiver prefix for top-level
+        extension functions whose canonical QN form is `<module>.<receiver>.<name>`.
+        Returns ``None`` for genuinely external imports
+        (``kotlin.collections.List`` etc.).
+        """
+        return self._get_kotlin_package_index().by_name.get(full_name)
+
     def _resolve_module_path(
         self,
         full_name: str,
@@ -332,6 +362,12 @@ class ImportProcessor:
             case cs.SupportedLanguage.JAVA:
                 if full_name.startswith(project_prefix):
                     return full_name
+            case cs.SupportedLanguage.KOTLIN:
+                index = self._get_kotlin_package_index()
+                if full_name in index.module_qns:
+                    return full_name
+                if resolved := self._resolve_kotlin_import(full_name):
+                    return resolved[1]
             case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
                 if self.workspace_resolver:
                     resolved = self._try_workspace_resolution(full_name)
@@ -802,6 +838,52 @@ class ImportProcessor:
                                 name=imported_name, path=resolved_path
                             )
                         )
+
+    def _parse_kotlin_imports(self, captures: dict, module_qn: str) -> None:
+        for import_node in captures.get(cs.CAPTURE_IMPORT, []):
+            if import_node.type != cs.TS_KOTLIN_IMPORT:
+                continue
+            parsed = kotlin_utils.parse_import_header(import_node)
+            if not parsed:
+                continue
+            if parsed.is_wildcard:
+                index = self._get_kotlin_package_index()
+                internal_modules = [
+                    mod_qn
+                    for mod_qn in index.modules_by_package.get(parsed.path, [])
+                    if mod_qn != module_qn
+                ]
+                extension_prefixes = [
+                    prefix
+                    for prefix in index.extension_prefixes_by_package.get(
+                        parsed.path, ()
+                    )
+                    if not prefix.startswith(
+                        f"{module_qn}{cs.SEPARATOR_DOT}"
+                    )
+                ]
+                if internal_modules or extension_prefixes:
+                    for mod_qn in internal_modules:
+                        self.import_mapping[module_qn][
+                            f"*{parsed.path}@{mod_qn}"
+                        ] = mod_qn
+                    for prefix in extension_prefixes:
+                        self.import_mapping[module_qn][
+                            f"*{parsed.path}@{prefix}"
+                        ] = prefix
+                else:
+                    self.import_mapping[module_qn][f"*{parsed.path}"] = parsed.path
+                continue
+            local_name = parsed.alias or parsed.path.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            # Prefer the canonical file-path-rooted Class QN when the package
+            # index resolves it — that's the form `function_registry` is keyed
+            # by, so Pass 3 call resolution can find the imported symbol.
+            # Fall through to the raw package path for genuinely external
+            # imports.
+            resolved = self._resolve_kotlin_import(parsed.path)
+            self.import_mapping[module_qn][local_name] = (
+                resolved[0] if resolved else parsed.path
+            )
 
     def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):

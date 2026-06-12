@@ -32,6 +32,15 @@ def extract_parent_classes(
             extract_java_superclass(class_node, module_qn, resolve_to_qn)
         )
 
+    if class_node.type in (
+        cs.TS_KOTLIN_CLASS_DECLARATION,
+        cs.TS_KOTLIN_OBJECT_DECLARATION,
+        cs.TS_KOTLIN_COMPANION_OBJECT,
+    ):
+        parent_classes.extend(
+            extract_kotlin_supertypes(class_node, module_qn, resolve_to_qn)
+        )
+
     parent_classes.extend(
         extract_python_superclasses(
             class_node, module_qn, import_processor, resolve_to_qn
@@ -142,6 +151,67 @@ def extract_java_superclass(
             ):
                 return [resolved]
     return []
+
+
+def extract_kotlin_supertypes(
+    class_node: Node,
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+) -> list[str]:
+    """Walk Kotlin's `delegation_specifiers` block for INHERITS / IMPLEMENTS targets.
+
+    tree-sitter-kotlin wraps the parent list in `delegation_specifiers` (plural).
+    Each `delegation_specifier` child holds one of:
+      - `constructor_invocation` (e.g. `: Base()`) → the supertype is the
+        first `user_type` child of the invocation.
+      - `user_type` directly (e.g. `: Iface`) → take its identifier.
+      - `explicit_delegation` (e.g. `: Iface by impl`) → first `user_type`
+        child names the interface being delegated.
+    """
+    parents: list[str] = []
+    for child in class_node.children:
+        if child.type != cs.TS_KOTLIN_DELEGATION_SPECIFIERS:
+            continue
+        for spec in child.children:
+            if spec.type != cs.TS_KOTLIN_DELEGATION_SPECIFIER:
+                continue
+            for grand in spec.children:
+                if grand.type == cs.TS_KOTLIN_CONSTRUCTOR_INVOCATION:
+                    for ci_child in grand.children:
+                        if ci_child.type == cs.TS_KOTLIN_USER_TYPE:
+                            if name := _kotlin_user_type_name(ci_child):
+                                parents.append(resolve_to_qn(name, module_qn))
+                            break
+                elif grand.type == cs.TS_KOTLIN_USER_TYPE:
+                    if name := _kotlin_user_type_name(grand):
+                        parents.append(resolve_to_qn(name, module_qn))
+                elif grand.type == cs.TS_KOTLIN_EXPLICIT_DELEGATION:
+                    for dch in grand.children:
+                        if dch.type == cs.TS_KOTLIN_USER_TYPE:
+                            if name := _kotlin_user_type_name(dch):
+                                parents.append(resolve_to_qn(name, module_qn))
+                            break
+    return parents
+
+
+def _kotlin_user_type_name(user_type_node: Node) -> str | None:
+    """Reconstruct the qualified Kotlin type name from a `user_type` node.
+
+    Kotlin parents like `class C : foo.bar.Base()` or `class C : Outer.Inner()`
+    are represented as a `user_type` node containing several `identifier`
+    children separated by literal `.` tokens. Returning only the first
+    identifier loses the qualifier (`foo` for `foo.bar.Base`, `Outer` for
+    `Outer.Inner`) and breaks INHERITS/IMPLEMENTS resolution. Walk every
+    identifier child and rejoin them so the full dotted name flows through
+    to `_resolve_kotlin_parent`'s simple-name fallback.
+    """
+    parts = [
+        text
+        for child in user_type_node.children
+        if child.type == cs.TS_KOTLIN_IDENTIFIER
+        and (text := safe_decode_text(child))
+    ]
+    return cs.SEPARATOR_DOT.join(parts) if parts else None
 
 
 def extract_python_superclasses(

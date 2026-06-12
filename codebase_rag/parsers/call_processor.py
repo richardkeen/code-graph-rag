@@ -12,6 +12,7 @@ from .. import logs as ls
 from ..language_spec import LanguageSpec
 from ..models import CallProcessingMetrics
 from ..services import IngestorProtocol
+from ..utils.fqn_resolver import resolve_fqn_from_ast
 from ..types_defs import (
     FunctionRegistryTrieProtocol,
     LanguageQueries,
@@ -20,6 +21,7 @@ from ..types_defs import (
 )
 from .call_resolver import CallResolver
 from .cpp import utils as cpp_utils
+from .handlers import get_handler
 from .hash_generator import generate_unique_hash
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
@@ -107,7 +109,9 @@ class CallProcessor:
             )
 
         try:
-            self._process_calls_in_classes(root_node, module_qn, language, queries)
+            self._process_calls_in_classes(
+                root_node, module_qn, language, queries, file_path
+            )
         except Exception as e:
             had_error = True
             logger.error(
@@ -554,6 +558,7 @@ class CallProcessor:
     def _process_methods_in_class(
         self,
         body_node: Node,
+        class_node: Node,
         class_qn: str,
         module_qn: str,
         language: cs.SupportedLanguage,
@@ -562,6 +567,12 @@ class CallProcessor:
         method_query = queries[language][cs.QUERY_FUNCTIONS]
         if not method_query:
             return
+        # Mirror class ingestion: route name/QN construction through the
+        # handler so caller method QNs match the parameter-signature form
+        # ingested for Kotlin overloads/constructors. Filter out captures
+        # belonging to nested companions/objects/inner classes — they get
+        # processed separately when their own class node is walked.
+        handler = get_handler(language)
         method_cursor = QueryCursor(method_query)
         method_captures = method_cursor.captures(body_node)
         method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
@@ -569,10 +580,20 @@ class CallProcessor:
             if not isinstance(method_node, Node):
                 continue
             try:
-                method_name = self._get_node_name(method_node)
-                if not method_name:
+                if not handler.is_direct_class_member(method_node, class_node):
                     continue
-                method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+
+                method_qn: str | None = None
+                if method_name := (
+                    handler.extract_method_name(method_node)
+                    or self._get_node_name(method_node)
+                ):
+                    method_qn = handler.build_caller_qn(
+                        class_qn, method_name, method_node
+                    )
+
+                if not method_qn:
+                    continue
                 self._ingest_function_calls(
                     method_node,
                     method_qn,
@@ -598,6 +619,7 @@ class CallProcessor:
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
+        file_path: Path,
     ) -> None:
         query = queries[language][cs.QUERY_CLASSES]
         if not query:
@@ -606,17 +628,46 @@ class CallProcessor:
         captures = cursor.captures(root_node)
         class_nodes = captures.get(cs.CAPTURE_CLASS, [])
 
+        # Use the same hook class ingestion uses, so languages whose tree-sitter
+        # grammar exposes class bodies as a child node rather than a `body` field
+        # (e.g. Kotlin) still get methods walked for CALLS.
+        handler = get_handler(language)
+
+        # The class query captures every class-like node in the tree, including
+        # nested classes / companions / inner objects. Resolve each to the
+        # canonical FQN the same way mixin ingests them, so caller method QNs
+        # built downstream match the ingested Method node QNs (e.g.
+        # `module.Outer.Companion.create`, not `module.Companion.create`).
+        fqn_config = handler.calls_fqn_spec
+
         for class_node in class_nodes:
             if not isinstance(class_node, Node):
                 continue
             try:
-                class_name = self._get_class_name_for_node(class_node, language)
-                if not class_name:
-                    continue
-                class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
-                if body_node := class_node.child_by_field_name(cs.FIELD_BODY):
+                class_qn: str | None = None
+                if fqn_config is not None:
+                    class_qn = resolve_fqn_from_ast(
+                        class_node,
+                        file_path,
+                        self.repo_path,
+                        self.project_name,
+                        fqn_config,
+                    )
+                if not class_qn:
+                    class_name = self._get_class_name_for_node(
+                        class_node, language
+                    )
+                    if not class_name:
+                        continue
+                    class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
+                if body_node := handler.find_class_body(class_node):
                     self._process_methods_in_class(
-                        body_node, class_qn, module_qn, language, queries
+                        body_node,
+                        class_node,
+                        class_qn,
+                        module_qn,
+                        language,
+                        queries,
                     )
             except Exception as e:
                 logger.error(
@@ -640,6 +691,18 @@ class CallProcessor:
         )
 
     def _get_call_target_name(self, call_node: Node) -> str | None:
+        # Kotlin's call_expression and infix_expression have no tree-sitter fields
+        # — they use positional children. JS/TS share the "call_expression" node
+        # type string but expose a `function` field, so distinguish by absence of
+        # field-based shape rather than node type alone.
+        if (
+            call_node.type
+            in (cs.TS_KOTLIN_CALL_EXPRESSION, cs.TS_KOTLIN_INFIX_EXPRESSION)
+            and call_node.child_by_field_name(cs.TS_FIELD_FUNCTION) is None
+            and call_node.child_by_field_name(cs.FIELD_NAME) is None
+        ):
+            return self._get_kotlin_call_target_name(call_node)
+
         if func_child := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION):
             match func_child.type:
                 case (
@@ -681,6 +744,43 @@ class CallProcessor:
         if name_node := call_node.child_by_field_name(cs.FIELD_NAME):
             if name_node.text is not None:
                 return str(name_node.text.decode(cs.ENCODING_UTF8))
+
+        return None
+
+    def _get_kotlin_call_target_name(self, call_node: Node) -> str | None:
+        """Walk a Kotlin call_expression / infix_expression and return the callee name.
+
+        tree-sitter-kotlin call/infix shapes:
+        - `(call_expression (identifier) value_arguments)` for direct calls like
+          `User(1)` — the first named child is the callee identifier.
+        - `(call_expression (navigation_expression expression "." identifier) value_arguments)`
+          for method calls like `a.b.c()` — the trailing `identifier` child of the
+          navigation_expression is the method name.
+        - `(infix_expression expression identifier expression)` for `1 to 2`-style
+          calls — the middle named child is the operator function.
+        """
+        if call_node.type == cs.TS_KOTLIN_CALL_EXPRESSION:
+            for child in call_node.children:
+                if not child.is_named:
+                    continue
+                if child.type == cs.TS_KOTLIN_IDENTIFIER and child.text:
+                    return child.text.decode(cs.ENCODING_UTF8)
+                if child.type == cs.TS_KOTLIN_NAVIGATION_EXPRESSION:
+                    for grand in reversed(list(child.children)):
+                        if grand.type == cs.TS_KOTLIN_IDENTIFIER and grand.text:
+                            return grand.text.decode(cs.ENCODING_UTF8)
+                    return None
+                # First named child wasn't an identifier or navigation_expression.
+                return None
+            return None
+
+        if call_node.type == cs.TS_KOTLIN_INFIX_EXPRESSION:
+            named = [c for c in call_node.children if c.is_named]
+            if len(named) >= 3:
+                middle = named[1]
+                if middle.type == cs.TS_KOTLIN_IDENTIFIER and middle.text:
+                    return middle.text.decode(cs.ENCODING_UTF8)
+            return None
 
         return None
 
